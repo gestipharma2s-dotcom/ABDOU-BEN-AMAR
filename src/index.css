@@ -1460,3 +1460,550 @@ body {
   transform: translateY(6px);
   box-shadow: var(--shadow-3d-inset) !important;
 }
+
+/* ==========================================================================
+   RESPONSIVE DESIGN - MOBILE FIRST
+   ========================================================================== */
+
+/* Tablet / Small laptops (768px - 1024px) */
+@media (max-width: 1024px) {
+  .win-workspace {
+    gap: 16px;
+    padding: 16px;
+  }
+
+  .win-left-panel {
+    width: 240px;
+  }
+
+  .header-search {
+    width: 300px;
+  }
+
+  .app-header {
+    padding: 0 16px;
+    height: 64px;
+  }
+
+  .app-toolbar {
+    padding: 12px 16px;
+  }
+
+  .btn-action {
+    padding: 8px 16px;
+    font-size: 13px;
+  }
+
+  .win-table td, .win-table th {
+    padding: 12px 16px;
+    font-size: 13px;
+  }
+
+  .kpi-card {
+    gap: 16px;
+    padding: 16px;
+  }
+
+  .modal-content {
+    width: 95%;
+    max-width: 500px;
+  }
+
+  .modal-header, .modal-body, .modal-footer {
+    padding: 16px 20px;
+  }
+
+  .dashboard-layouts {
+    display: flex;
+    flex-direction: column;
+  }
+}
+
+/* Mobile Large (480px - 768px) */
+@media (max-width: 768px) {
+  body {
+    font-size: 12px;
+  }
+
+  /* Hide left sidebar on mobile, move to hamburger menu */
+  .win-workspace {
+    gap: 8px;
+    padding: 12px;
+  }
+
+  .win-left-panel {
+    display: none;
+    width: 100%;
+    position: fixed;
+    top: 72px;
+    left: 0;
+    right: 0;
+    height: calc(100vh - 72px);
+    z-index: 99;
+    border-radius: 0;
+    max-height: 80vh;
+    overflow-y: auto;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  }
+
+  .win-left-panel.mobile-open {
+    display: flex;
+  }
+
+  /* Header responsive */
+  .app-header {
+    padding: 0 12px;
+    height: 56px;
+    gap: 8px;
+  }
+
+  .header-left {
+    gap: 8px;
+  }
+
+  .logo-container {
+    width: 40px;
+    height: 40px;
+  }
+
+  .header-titles h1 {
+    font-size: 16px;
+  }
+
+  .header-search {
+    display: none; /* Hide search on small mobile */
+  }
+
+  .header-right {
+    gap: 8px;
+  }
+
+  .icon-btn {
+    width: 36px;
+    height: 36px;
+  }
+
+  .magasin-badge {
+    display: none;
+  }
+
+  .user-info-badge {
+    display: none;
+  }
+
+  /* Toolbar mobile */
+  .app-toolbar {
+    padding: 8px 12px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .toolbar-group {
+    gap: 8px;
+  }
+
+  .btn-action {
+    padding: 6px 12px;
+    font-size: 11px;
+    gap: 4px;
+  }
+
+  .btn-action span {
+    display: none;
+  }
+
+  .btn-action svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  /* Center panel */
+  .win-center-panel {
+    border-radius: 8px;
+  }
+
+  .win-tabs-bar {
+    padding: 8px 16px 0;
+    gap: 6px;
+  }
+
+  .win-tab {
+    padding: 8px 16px;
+    font-size: 12px;
+  }
+
+  /* Remove right panel on mobile */
+  .win-preview-panel, .win-right-panel {
+    display: none !important;
+  }
+
+  /* Tables mobile */
+  .win-grid-container {
+    padding: 8px;
+  }
+
+  .win-table {
+    font-size: 11px;
+  }
+
+  .win-table th {
+    padding: 8px 12px;
+    font-size: 10px;
+  }
+
+  .win-table td {
+    padding: 8px 12px;
+    font-size: 11px;
+  }
+
+  /* Dashboard cards */
+  .kpi-grid {
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  .kpi-card {
+    gap: 8px;
+    padding: 8px 12px;
+    flex-direction: column;
+    text-align: center;
+  }
+
+  .kpi-icon-wrapper {
+    width: 48px;
+    height: 48px;
+  }
+
+  .kpi-val {
+    font-size: 16px;
+  }
+
+  .kpi-label {
+    font-size: 10px;
+  }
+
+  /* Modals */
+  .modal-content {
+    width: 90%;
+    max-width: calc(100% - 20px);
+    max-height: 85vh;
+  }
+
+  .modal-header {
+    padding: 12px 16px;
+  }
+
+  .modal-header span {
+    font-size: 14px;
+  }
+
+  .modal-body {
+    padding: 16px;
+  }
+
+  .modal-footer {
+    padding: 12px 16px;
+    gap: 8px;
+  }
+
+  .win-tab-close {
+    width: 28px;
+    height: 28px;
+  }
+
+  /* Forms */
+  .form-group {
+    gap: 6px;
+  }
+
+  .form-label {
+    font-size: 12px;
+  }
+
+  .form-input, .form-select, .form-textarea {
+    padding: 10px 12px;
+    font-size: 14px;
+    border-radius: 6px;
+  }
+
+  .form-textarea {
+    min-height: 80px;
+  }
+
+  /* Buttons */
+  .btn {
+    padding: 10px 16px;
+    font-size: 12px;
+  }
+
+  .badge {
+    font-size: 10px;
+    padding: 2px 6px;
+  }
+
+  /* Cards and content */
+  .card {
+    border-radius: 8px;
+    padding: 12px;
+  }
+
+  .card-title {
+    font-size: 12px;
+  }
+
+  /* Split layouts mobile */
+  .split-view {
+    grid-template-columns: 1fr !important;
+  }
+
+  .dashboard-layouts {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  /* Tree navigation mobile */
+  .tree-node {
+    padding: 10px 12px;
+    font-size: 13px;
+    gap: 12px;
+  }
+
+  .tree-node svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  .tree-group {
+    margin-bottom: 8px;
+    padding: 6px;
+  }
+
+  /* Table responsive - horizontal scroll */
+  .win-grid-container {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* Mobile Small (< 480px) */
+@media (max-width: 480px) {
+  :root {
+    --radius-lg: 12px;
+    --radius-md: 8px;
+  }
+
+  body {
+    font-size: 11px;
+  }
+
+  .app-header {
+    height: 48px;
+    padding: 0 8px;
+  }
+
+  .header-titles h1 {
+    font-size: 14px;
+  }
+
+  .header-badge {
+    display: none;
+  }
+
+  .logo-container {
+    width: 36px;
+    height: 36px;
+  }
+
+  .app-toolbar {
+    padding: 6px 8px;
+  }
+
+  .btn-action {
+    padding: 4px 8px;
+    font-size: 10px;
+    min-width: 44px;
+  }
+
+  .toolbar-group {
+    gap: 4px;
+  }
+
+  .win-tab {
+    padding: 6px 12px;
+    font-size: 11px;
+  }
+
+  .win-table {
+    font-size: 10px;
+  }
+
+  .win-table th {
+    padding: 6px 8px;
+    font-size: 9px;
+  }
+
+  .win-table td {
+    padding: 6px 8px;
+    font-size: 10px;
+  }
+
+  .modal-content {
+    width: 95%;
+    max-height: 90vh;
+  }
+
+  .modal-header {
+    padding: 10px 12px;
+  }
+
+  .modal-header span {
+    font-size: 13px;
+  }
+
+  .modal-body {
+    padding: 12px;
+  }
+
+  .modal-footer {
+    padding: 10px 12px;
+    flex-direction: column;
+  }
+
+  .modal-footer .btn {
+    width: 100%;
+    padding: 8px 12px;
+  }
+
+  .form-input, .form-select, .form-textarea {
+    padding: 8px 10px;
+    font-size: 13px;
+    border-radius: 4px;
+  }
+
+  .form-label {
+    font-size: 11px;
+  }
+
+  .btn {
+    padding: 8px 12px;
+    font-size: 11px;
+  }
+
+  .btn-primary, .btn-secondary {
+    padding: 10px 14px;
+  }
+
+  .kpi-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 6px;
+  }
+
+  .kpi-card {
+    padding: 6px 8px;
+    gap: 6px;
+  }
+
+  .kpi-icon-wrapper {
+    width: 40px;
+    height: 40px;
+  }
+
+  .kpi-val {
+    font-size: 14px;
+  }
+
+  .kpi-label {
+    font-size: 9px;
+  }
+
+  .card {
+    padding: 8px;
+  }
+
+  .card-title {
+    font-size: 11px;
+  }
+
+  /* Login responsive */
+  .login-container {
+    height: auto;
+  }
+
+  .login-form-panel {
+    padding: 24px 16px;
+  }
+
+  .login-title {
+    font-size: 20px;
+  }
+
+  .login-accounts-grid {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .chip-email, .chip-role {
+    font-size: 10px;
+  }
+
+  /* Tree navigation */
+  .tree-node {
+    padding: 8px 10px;
+    font-size: 12px;
+    gap: 10px;
+  }
+
+  .tree-group-header {
+    padding: 10px;
+    font-size: 11px;
+  }
+
+  .win-panel-header {
+    padding: 12px 10px;
+    font-size: 14px;
+  }
+
+  /* Badge responsive */
+  .badge, .status-badge {
+    font-size: 9px;
+    padding: 2px 4px;
+  }
+
+  /* Tabs bar */
+  .win-tabs-bar {
+    padding: 6px 12px 0;
+  }
+
+  /* Remove preview panel completely on tiny screens */
+  .win-preview-panel, .win-right-panel {
+    display: none !important;
+  }
+}
+
+/* Landscape mode on mobile */
+@media (max-width: 768px) and (orientation: landscape) {
+  .app-header {
+    height: 48px;
+  }
+
+  .app-toolbar {
+    display: none; /* Hide toolbar to save space */
+  }
+
+  .win-workspace {
+    padding: 8px;
+  }
+
+  .win-left-panel {
+    display: none;
+  }
+
+  .win-center-panel {
+    border-radius: 4px;
+  }
+
+  .win-tabs-bar {
+    padding: 4px 12px 0;
+  }
+}

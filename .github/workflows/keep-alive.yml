@@ -4,7 +4,6 @@ on:
   schedule:
     # Tous les jours à 00:00 UTC
     - cron: '0 0 * * *'
-
   workflow_dispatch:
 
 jobs:
@@ -12,28 +11,29 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Tester la table articles
+      - name: Appeler la fonction keep_alive
         run: |
-          URL="${{ secrets.SUPABASE_URL }}/rest/v1/articles?select=id&limit=1"
+          URL="${{ secrets.SUPABASE_URL }}/rest/v1/rpc/keep_alive"
 
           HTTP_CODE=$(curl -s \
+            -X POST \
             -o response.json \
             -w "%{http_code}" \
             -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}" \
             -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
-            -H "Accept: application/json" \
+            -H "Content-Type: application/json" \
+            -d '{}' \
             "$URL")
 
-          echo "===================================="
+          echo "==============================="
           echo "Date : $(date)"
           echo "HTTP : $HTTP_CODE"
-          echo "===================================="
-
+          echo "==============================="
           cat response.json
 
           if [ "$HTTP_CODE" = "200" ]; then
-            echo "✅ Supabase est actif."
+            echo "✅ Supabase répond correctement."
           else
-            echo "❌ Erreur HTTP $HTTP_CODE"
+            echo "❌ Erreur HTTP : $HTTP_CODE"
             exit 1
           fi

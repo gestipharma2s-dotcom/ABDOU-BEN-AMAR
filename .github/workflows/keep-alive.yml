@@ -4,6 +4,7 @@ on:
   schedule:
     # Tous les jours à 00:00 UTC
     - cron: '0 0 * * *'
+
   workflow_dispatch:
 
 jobs:
@@ -11,9 +12,17 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Appeler la fonction keep_alive
+      - name: Ping Supabase Keep Alive
+        shell: bash
         run: |
+          set -e
+
           URL="${{ secrets.SUPABASE_URL }}/rest/v1/rpc/keep_alive"
+
+          echo "==========================================="
+          echo "Date : $(date)"
+          echo "URL  : $URL"
+          echo "==========================================="
 
           HTTP_CODE=$(curl -s \
             -X POST \
@@ -22,18 +31,32 @@ jobs:
             -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}" \
             -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
             -H "Content-Type: application/json" \
+            -H "Accept: application/json" \
             -d '{}' \
             "$URL")
 
-          echo "==============================="
-          echo "Date : $(date)"
-          echo "HTTP : $HTTP_CODE"
-          echo "==============================="
+          echo ""
+          echo "========== HTTP =========="
+          echo "$HTTP_CODE"
+
+          echo ""
+          echo "========== RESPONSE =========="
           cat response.json
 
-          if [ "$HTTP_CODE" = "200" ]; then
-            echo "✅ Supabase répond correctement."
-          else
+          echo ""
+          echo "========== VALIDATION =========="
+
+          if [ "$HTTP_CODE" != "200" ]; then
             echo "❌ Erreur HTTP : $HTTP_CODE"
             exit 1
           fi
+
+          if grep -q "OK" response.json; then
+            echo "✅ Fonction keep_alive() exécutée avec succès."
+          else
+            echo "❌ Réponse inattendue."
+            exit 1
+          fi
+
+          echo ""
+          echo "🎉 Supabase est opérationnel."

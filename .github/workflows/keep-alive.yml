@@ -8,15 +8,15 @@ on:
   workflow_dispatch:
 
 jobs:
-  ping:
+  keep-alive:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Vérifier la table ARTICLES
+      - name: Tester la table articles
         run: |
-          URL="${{ secrets.SUPABASE_URL }}/rest/v1/ARTICLES?select=*&limit=1"
+          URL="${{ secrets.SUPABASE_URL }}/rest/v1/articles?select=id&limit=1"
 
-          STATUS=$(curl -s \
+          HTTP_CODE=$(curl -s \
             -o response.json \
             -w "%{http_code}" \
             -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}" \
@@ -24,17 +24,16 @@ jobs:
             -H "Accept: application/json" \
             "$URL")
 
-          echo "=============================="
-          echo "HTTP Status : $STATUS"
-          echo "=============================="
-          cat response.json
-          echo ""
-          echo "=============================="
+          echo "===================================="
+          echo "Date : $(date)"
+          echo "HTTP : $HTTP_CODE"
+          echo "===================================="
 
-          if [ "$STATUS" -eq 200 ]; then
-            echo "✅ Supabase fonctionne."
-            exit 0
+          cat response.json
+
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "✅ Supabase est actif."
           else
-            echo "❌ Erreur HTTP : $STATUS"
+            echo "❌ Erreur HTTP $HTTP_CODE"
             exit 1
           fi

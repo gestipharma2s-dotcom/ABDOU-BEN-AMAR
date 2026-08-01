@@ -2,8 +2,8 @@ name: Keep Supabase Alive
 
 on:
   schedule:
-    # Exécution tous les 3 jours à 00:00 UTC
-    - cron: '0 0 */3 * *'
+    # Tous les jours à 00:00 UTC
+    - cron: '0 0 * * *'
 
   workflow_dispatch:
 
@@ -12,18 +12,29 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Ping Supabase
+      - name: Vérifier la table ARTICLES
         run: |
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+          URL="${{ secrets.SUPABASE_URL }}/rest/v1/ARTICLES?select=*&limit=1"
+
+          STATUS=$(curl -s \
+            -o response.json \
+            -w "%{http_code}" \
             -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}" \
             -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
-            "${{ secrets.SUPABASE_URL }}/rest/v1/")
+            -H "Accept: application/json" \
+            "$URL")
 
-          echo "HTTP Status: $STATUS"
+          echo "=============================="
+          echo "HTTP Status : $STATUS"
+          echo "=============================="
+          cat response.json
+          echo ""
+          echo "=============================="
 
-          if [ "$STATUS" -eq 200 ] || [ "$STATUS" -eq 401 ]; then
-            echo "Supabase répond correctement."
+          if [ "$STATUS" -eq 200 ]; then
+            echo "✅ Supabase fonctionne."
+            exit 0
           else
-            echo "Erreur : HTTP $STATUS"
+            echo "❌ Erreur HTTP : $STATUS"
             exit 1
           fi

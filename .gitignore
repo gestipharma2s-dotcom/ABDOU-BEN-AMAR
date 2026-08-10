@@ -1,3 +1,20 @@
+# Secrets — .env contient VITE_SUPABASE_SERVICE_ROLE_KEY et SUPABASE_DB_URL.
+# Le dépôt GitHub étant public, ce fichier ne doit jamais y être versionné.
+.env
+.env.*
+!.env.example
+
+# Sondes de schéma jetables issues de débogages
+tmp_*.mjs
+
+# Fichiers parasites de 0 octet créés par des commandes shell mal formées
+({
+({msg
+1)
+counts\[m\]
+console.error('Fetch
+console.error(e))
+
 # Logs
 logs
 *.log
@@ -22,3 +39,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Réglages locaux de l'agent et fichiers d'essai
+.claude/settings.local.json
+temp.json

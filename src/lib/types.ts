@@ -1,6 +1,6 @@
 // Type definitions for the Multi-Store Construction Management Application
 
-export type UserRole = 'direction' | 'magasinier' | 'achat' | 'comptabilite' | 'chef_chantier';
+export type UserRole = 'direction' | 'magasinier' | 'achat' | 'comptabilite' | 'chef_chantier' | 'demandeur' | 'responsable' | 'acheteur' | 'comptable' | 'directeur';
 
 export interface UserProfile {
   id: string;
@@ -9,6 +9,7 @@ export interface UserProfile {
   magasinId?: string; // Magasin principal (rétrocompat – magasinier mono-site)
   magasinsIds?: string[]; // Un ou plusieurs magasins autorisés
   email: string;
+  privileges?: string[]; // Optional admin-granted privileges
   telephone?: string;
   password: string; // Texte brut en mode mock; à hacher en production
   actif: boolean;
@@ -50,10 +51,15 @@ export interface Fournisseur {
   adresse: string;
   contactNom: string;
   solde: number; // Current balance/debt
+  nif?: string;
+  nis?: string;
+  ai?: string;
+  rc?: string;
+  email?: string;
   createdAt: string;
 }
 
-export type CommandeStatus = 'Brouillon' | 'Validé' | 'Commandé' | 'Reçu partiellement' | 'Reçu totalement' | 'Clôturé';
+export type CommandeStatus = 'Brouillon' | 'En attente' | 'Validée' | 'Validé' | 'Refusée' | 'Commandé' | 'Reçu partiellement' | 'Reçu totalement' | 'Clôturé';
 
 export interface BonCommandeLigne {
   articleId: string;
@@ -66,8 +72,8 @@ export interface BonCommandeLigne {
 export interface BonCommande {
   id: string;
   code: string;
-  fournisseurId: string;
-  fournisseurNom: string;
+  fournisseurId?: string;
+  fournisseurNom?: string;
   statut: CommandeStatus;
   dateCommande: string;
   lignes: BonCommandeLigne[];
@@ -77,6 +83,8 @@ export interface BonCommande {
   magasinDestinationId: string;
   createdById: string;
   createdByNom: string;
+  priorite?: 'Basse' | 'Moyenne' | 'Haute' | 'Urgente';
+  observation?: string;
 }
 
 export interface ReceptionLigne {
@@ -84,13 +92,16 @@ export interface ReceptionLigne {
   designation: string;
   quantiteDemandee: number;
   quantiteRecue: number;
+  prixUnitaire?: number; // Saisi en réception directe (sans DA) ; sinon prixMoyen de l'article
 }
 
 export interface Reception {
   id: string;
   code: string;
-  commandeId: string;
+  commandeId: string; // Vide pour une réception directe (sans Demande d'Achat)
   commandeCode: string;
+  fournisseurId?: string; // Renseigné uniquement pour une réception directe
+  fournisseurNom?: string;
   magasinId: string;
   magasinNom: string;
   dateReception: string;
@@ -110,7 +121,7 @@ export interface StockItem {
   quantite: number;
 }
 
-export type MouvementType = 'ENTREE_ACHAT' | 'ENTREE_TRANSFERT' | 'SORTIE_AFFECTATION' | 'SORTIE_TRANSFERT' | 'CORRECTION_INVENTAIRE';
+export type MouvementType = 'ENTREE_ACHAT' | 'ENTREE_TRANSFERT' | 'SORTIE_AFFECTATION' | 'SORTIE_TRANSFERT' | 'RETOUR_AFFECTATION' | 'CORRECTION_INVENTAIRE' | 'ENTREE_INVENTAIRE' | 'SORTIE_INVENTAIRE' | 'SORTIE_CONSOMMATION';
 
 export interface MouvementStock {
   id: string;
@@ -126,23 +137,51 @@ export interface MouvementStock {
   utilisateurNom: string;
 }
 
+export interface InventaireLigne {
+  articleId: string;
+  designation: string;
+  quantiteTheorique: number;
+  quantiteReelle: number;
+  ecart: number;
+}
+
+export interface Inventaire {
+  id: string;
+  code: string;
+  magasinId: string;
+  magasinNom: string;
+  dateInventaire: string;
+  statut: 'Brouillon' | 'Validé';
+  lignes: InventaireLigne[];
+  creeParNom: string;
+  valideParNom?: string;
+  note?: string;
+}
+
 export interface Affectation {
   id: string;
   code: string;
   employeId: string;
   employeNom: string;
-  chantierId: string;
-  chantierNom: string;
-  magasinId: string;
+  chantierId?: string; // Optional if destination is magasin
+  chantierNom?: string;
+  magasinId: string; // Source warehouse
   magasinNom: string;
+  magasinDestId?: string; // Destination warehouse
+  magasinDestNom?: string;
   dateAffectation: string;
-  articleId: string;
-  articleDesignation: string;
-  quantite: number;
+  lignes: { articleId: string; designation: string; quantite: number }[]; // Replaces single article logic
   motif: string;
-  statut: 'Affecté' | 'Retourné';
+  chauffeur?: string;
+  vehicule?: string;
+  statut: 'En attente' | 'Validé' | 'Affecté' | 'Retourné';
   dateRetour?: string;
   magasinierNom: string;
+  
+  // Legacy fields for backward compatibility during migration
+  articleId?: string;
+  articleDesignation?: string;
+  quantite?: number;
 }
 
 export interface Employe {
@@ -163,7 +202,10 @@ export interface Chantier {
   actif: boolean;
 }
 
-export type TransfertStatus = 'Demande' | 'Expédié' | 'Reçu' | 'Refusé';
+// Workflow transfert : Demande → Validé (sortie du dépôt départ) → Reçu (entrée au dépôt destination).
+// 'Refusé' clôt la demande à la validation. 'Expédié' est l'ancien libellé de 'Validé' : il subsiste
+// dans les lignes déjà en base et est ramené à 'Validé' à la lecture (normalizeTransfertStatut).
+export type TransfertStatus = 'Demande' | 'Validé' | 'Expédié' | 'Reçu' | 'Refusé';
 
 export interface TransfertLigne {
   articleId: string;
@@ -180,7 +222,7 @@ export interface Transfert {
   magasinDestNom: string;
   statut: TransfertStatus;
   dateDemande: string;
-  dateExpedition?: string;
+  dateExpedition?: string; // Date de validation = sortie effective du dépôt départ (colonne "dateExpedition" en base)
   dateReception?: string;
   lignes: TransfertLigne[];
   demandeurNom: string;
@@ -210,7 +252,7 @@ export interface Facture {
   receptionValideId?: string; // Reference to the validated reception that triggered auto-creation
 }
 
-export type ModePaiement = 'Virement' | 'Chèque' | 'Espèces';
+export type ModePaiement = 'Virement' | 'Chèque' | 'Espèces' | 'CCP' | 'Carte bancaire';
 
 export interface Paiement {
   id: string;
@@ -218,13 +260,44 @@ export interface Paiement {
   fournisseurId: string;
   fournisseurNom: string;
   factureId?: string; // Associated Facture ID
-  factureRef?: string; // Associated Facture Code/Ref
+  factureRef?: string; // Associated Facture or Reception references
+  receptionIds?: string[]; // Optionally selected receptions / BL ids
   lettre: boolean; // Whether the payment is matched/lettered
   montant: number;
   datePaiement: string;
   mode: ModePaiement;
   referenceTransaction: string;
   comptableNom: string;
+  note?: string;
+}
+
+// Identité et coordonnées de l'entreprise (une seule ligne en base, table `societe`).
+// Sert d'en-tête aux documents imprimés (bons de commande, BL, factures, transferts).
+export interface Societe {
+  id: string;
+  raisonSociale: string;
+  formeJuridique?: string;
+  activite?: string;
+  // Identifiants fiscaux algériens
+  rc?: string;
+  nif?: string;
+  nis?: string;
+  ai?: string;   // Article d'imposition
+  capitalSocial?: number;
+  // Coordonnées
+  adresse?: string;
+  ville?: string;
+  wilaya?: string;
+  codePostal?: string;
+  telephone?: string;
+  telephone2?: string;
+  fax?: string;
+  email?: string;
+  siteWeb?: string;
+  // Coordonnées bancaires
+  banque?: string;
+  rib?: string;
+  logoUrl?: string;
   note?: string;
 }
 
@@ -249,3 +322,4 @@ export interface Notification {
   lu: boolean;
   dateNotification: string;
 }
+

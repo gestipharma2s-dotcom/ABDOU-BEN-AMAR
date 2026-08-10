@@ -3,7 +3,7 @@ import type {
   UserProfile, UserRole, Magasin, Article, Fournisseur, BonCommande, 
   Reception, ReceptionLigne, StockItem, MouvementStock, Affectation, 
   Employe, Chantier, Transfert, TransfertLigne, Paiement, AuditLog, Notification, CommandeStatus, ModePaiement, MouvementType,
-  Facture
+  Facture, Inventaire, InventaireLigne
 } from './types';
 
 // Pre-defined users for simulation
@@ -22,14 +22,14 @@ export const MOCK_USERS: UserProfile[] = [
 const genId = (prefix: string) => `${prefix}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
 
 // Default Data Set
-const DEFAULT_MAGASINS: Magasin[] = [
+export const DEFAULT_MAGASINS: Magasin[] = [
   { id: 'mag-alg', code: 'MAG-ALG', nom: 'Magasin Central - Alger', ville: 'Dar El Beïda', wilaya: 'Alger (16)', responsable: 'Rachid Magasiner', telephone: '021 50 12 34', actif: true, createdAt: '2026-01-10T08:00:00Z' },
   { id: 'mag-orn', code: 'MAG-ORN', nom: 'Magasin Régional - Oran', ville: 'Bir El Djir', wilaya: 'Oran (31)', responsable: 'Yassine Magasiner', telephone: '041 82 56 78', actif: true, createdAt: '2026-02-15T09:00:00Z' },
   { id: 'mag-cst', code: 'MAG-CST', nom: 'Magasin Est - Constantine', ville: 'El Khroub', wilaya: 'Constantine (25)', responsable: 'Sofiane Bati', telephone: '031 94 33 22', actif: true, createdAt: '2026-03-01T10:00:00Z' },
   { id: 'mag-anb', code: 'MAG-ANB', nom: 'Dépôt Annaba', ville: 'El Bouni', wilaya: 'Annaba (23)', responsable: 'Fateh Aïn', telephone: '038 66 11 00', actif: false, createdAt: '2026-03-20T11:00:00Z' }
 ];
 
-const DEFAULT_ARTICLES: Article[] = [
+export const DEFAULT_ARTICLES: Article[] = [
   { id: 'art-ciment', reference: 'MAT-CIM-50K', designation: 'Ciment Gris Lafarge CPJ-CEM II 42.5N', categorie: 'Gros Œuvre', unite: 'Sac (50kg)', stockMinimum: 100, prixMoyen: 850, photoUrl: 'https://images.unsplash.com/photo-1589939705384-5185137a7f0f?w=200&auto=format&fit=crop&q=60', qrCode: 'MAT-CIM-50K', createdAt: '2026-01-11T09:00:00Z' },
   { id: 'art-fer12', reference: 'MAT-FER-D12', designation: 'Rond à Béton FE E500 Ø12mm', categorie: 'Gros Œuvre', unite: 'Barre (12m)', stockMinimum: 150, prixMoyen: 1250, photoUrl: 'https://images.unsplash.com/photo-1504917595217-d4dc5ebe6122?w=200&auto=format&fit=crop&q=60', qrCode: 'MAT-FER-D12', createdAt: '2026-01-11T09:30:00Z' },
   { id: 'art-peinture', reference: 'FIN-PEI-AST', designation: 'Peinture Murale Astral Blanche Mat', categorie: 'Second Œuvre / Finition', unite: 'Bidon (20kg)', stockMinimum: 30, prixMoyen: 8200, photoUrl: 'https://images.unsplash.com/photo-1562259949-e8e7689d7828?w=200&auto=format&fit=crop&q=60', qrCode: 'FIN-PEI-AST', createdAt: '2026-01-12T10:00:00Z' },
@@ -40,14 +40,14 @@ const DEFAULT_ARTICLES: Article[] = [
   { id: 'art-vis', reference: 'CON-VIS-B45', designation: 'Vis pour plaques de plâtre 3.5x25mm', categorie: 'Consommables', unite: 'Boîte (1000pcs)', stockMinimum: 40, prixMoyen: 1100, photoUrl: 'https://images.unsplash.com/photo-1530124560072-a059b014b411?w=200&auto=format&fit=crop&q=60', qrCode: 'CON-VIS-B45', createdAt: '2026-01-15T09:00:00Z' }
 ];
 
-const DEFAULT_FOURNISSEURS: Fournisseur[] = [
+export const DEFAULT_FOURNISSEURS: Fournisseur[] = [
   { id: 'fou-lafarge', nomSociete: 'Lafarge Ciments Algérie Spa', rcNif: '000316090940381 / 1631024509', telephone: '021 98 20 00', adresse: 'Pins Maritimes, Mohammadia, Alger', contactNom: 'M. Sofiane Hamadouche', solde: 850000, createdAt: '2026-01-15T10:00:00Z' },
   { id: 'fou-batipro', nomSociete: 'Sarl BatiPro Distribution', rcNif: '083416001099824 / 000816090949312', telephone: '023 85 41 22', adresse: 'Zone Industrielle Oued Smar, Alger', contactNom: 'Mme. Amina Belkacem', solde: 320000, createdAt: '2026-01-16T11:00:00Z' },
   { id: 'fou-quincaillerie', nomSociete: 'Ets Benabderrahmane Outillage', rcNif: '198431002349001 / 198431020039200', telephone: '041 33 44 55', adresse: 'Boulevard des Chasseurs, Oran', contactNom: 'M. Salim Benabderrahmane', solde: 45000, createdAt: '2026-01-20T09:00:00Z' },
   { id: 'fou-algerie_cables', nomSociete: 'Spa ENICAB (Algérie Câbles)', rcNif: '000125039485739 / 0001250394857', telephone: '031 66 77 88', adresse: 'Zone Industrielle El Khroub, Constantine', contactNom: 'M. Redouane Zergui', solde: 0, createdAt: '2026-02-10T14:00:00Z' }
 ];
 
-const DEFAULT_EMPLOYES: Employe[] = [
+export const DEFAULT_EMPLOYES: Employe[] = [
   { id: 'emp-1', nom: 'Mustapha Loucif', fonction: 'Maçon Qualifié', service: 'Production Gros Œuvre', telephone: '0555 12 34 56', chantierId: 'cha-100log', chantierNom: '100 Logements LPP' },
   { id: 'emp-2', nom: 'Yacine Mezouar', fonction: 'Chef d\'Équipe Électricien', service: 'Second Œuvre', telephone: '0661 98 76 54', chantierId: 'cha-100log', chantierNom: '100 Logements LPP' },
   { id: 'emp-3', nom: 'Mourad Khelifi', fonction: 'Ferrailleur', service: 'Production Gros Œuvre', telephone: '0770 44 55 66', chantierId: 'cha-aeroport', chantierNom: 'Extension Aérogare Oran' },
@@ -55,14 +55,14 @@ const DEFAULT_EMPLOYES: Employe[] = [
   { id: 'emp-5', nom: 'Sid Ahmed Ziani', fonction: 'Magasinier Assistant', service: 'Logistique', telephone: '0658 99 88 77', chantierId: 'cha-viaduc', chantierNom: 'Viaduc Transrhumel Constantine' }
 ];
 
-const DEFAULT_CHANTIERS: Chantier[] = [
+export const DEFAULT_CHANTIERS: Chantier[] = [
   { id: 'cha-100log', nom: 'Chantier 100 Logements LPP - Alger (Reghaïa)', wilaya: 'Alger (16)', chefNom: 'Omar Chef', actif: true },
   { id: 'cha-aeroport', nom: 'Chantier Extension Aérogare Ouest - Oran', wilaya: 'Oran (31)', chefNom: 'Mourad Ziri', actif: true },
   { id: 'cha-viaduc', nom: 'Chantier Viaduc Transrhumel - Constantine', wilaya: 'Constantine (25)', chefNom: 'Sofiane Bati', actif: true },
   { id: 'cha-stade', nom: 'Chantier Nouveau Stade - Tizi Ouzou', wilaya: 'Tizi Ouzou (15)', chefNom: 'Lounes Khelil', actif: false }
 ];
 
-const DEFAULT_STOCKS: StockItem[] = [
+export const DEFAULT_STOCKS: StockItem[] = [
   // Magasin Alger
   { id: 'stk-1', magasinId: 'mag-alg', articleId: 'art-ciment', quantite: 450 },
   { id: 'stk-2', magasinId: 'mag-alg', articleId: 'art-fer12', quantite: 80 }, // Alert: stockMinimum = 150
@@ -94,14 +94,14 @@ const DEFAULT_STOCKS: StockItem[] = [
   { id: 'stk-24', magasinId: 'mag-cst', articleId: 'art-vis', quantite: 50 }
 ];
 
-const DEFAULT_MOUVEMENTS: MouvementStock[] = [
+export const DEFAULT_MOUVEMENTS: MouvementStock[] = [
   { id: 'mov-1', magasinId: 'mag-alg', magasinNom: 'Magasin Central - Alger', articleId: 'art-ciment', articleDesignation: 'Ciment Gris Lafarge CPJ-CEM II 42.5N', type: 'ENTREE_ACHAT', quantite: 500, referenceDoc: 'BC-2026-001', dateMouvement: '2026-05-10T11:00:00Z', note: 'Réception totale Commande BC-2026-001', utilisateurNom: 'Rachid Magasiner' },
   { id: 'mov-2', magasinId: 'mag-alg', magasinNom: 'Magasin Central - Alger', articleId: 'art-ciment', articleDesignation: 'Ciment Gris Lafarge CPJ-CEM II 42.5N', type: 'SORTIE_AFFECTATION', quantite: -50, referenceDoc: 'BS-2026-001', dateMouvement: '2026-05-12T14:30:00Z', note: 'Sortie pour Chantier 100 Logements LPP', utilisateurNom: 'Rachid Magasiner' },
   { id: 'mov-3', magasinId: 'mag-orn', magasinNom: 'Magasin Régional - Oran', articleId: 'art-fer12', type: 'ENTREE_TRANSFERT', articleDesignation: 'Rond à Béton FE E500 Ø12mm', quantite: 100, referenceDoc: 'TR-2026-001', dateMouvement: '2026-05-15T10:00:00Z', note: 'Réception transfert de Alger', utilisateurNom: 'Yassine Magasiner' },
   { id: 'mov-4', magasinId: 'mag-alg', magasinNom: 'Magasin Central - Alger', articleId: 'art-fer12', type: 'SORTIE_TRANSFERT', articleDesignation: 'Rond à Béton FE E500 Ø12mm', quantite: -100, referenceDoc: 'TR-2026-001', dateMouvement: '2026-05-14T09:00:00Z', note: 'Expédition transfert vers Oran', utilisateurNom: 'Rachid Magasiner' }
 ];
 
-const DEFAULT_COMMANDES: BonCommande[] = [
+export const DEFAULT_COMMANDES: BonCommande[] = [
   {
     id: 'cmd-1',
     code: 'BC-2026-001',
@@ -155,7 +155,7 @@ const DEFAULT_COMMANDES: BonCommande[] = [
   }
 ];
 
-const DEFAULT_RECEPTIONS: Reception[] = [
+export const DEFAULT_RECEPTIONS: Reception[] = [
   {
     id: 'rec-1',
     code: 'BR-2026-001',
@@ -175,7 +175,7 @@ const DEFAULT_RECEPTIONS: Reception[] = [
   }
 ];
 
-const DEFAULT_AFFECTATIONS: Affectation[] = [
+export const DEFAULT_AFFECTATIONS: Affectation[] = [
   {
     id: 'aff-1',
     code: 'BS-2026-001',
@@ -189,6 +189,9 @@ const DEFAULT_AFFECTATIONS: Affectation[] = [
     articleId: 'art-ciment',
     articleDesignation: 'Ciment Gris Lafarge CPJ-CEM II 42.5N',
     quantite: 50,
+    lignes: [
+      { articleId: 'art-ciment', designation: 'Ciment Gris Lafarge CPJ-CEM II 42.5N', quantite: 50 }
+    ],
     motif: 'Coulage dalle rez-de-chaussée Bloc C',
     statut: 'Affecté',
     magasinierNom: 'Rachid Magasiner'
@@ -206,13 +209,16 @@ const DEFAULT_AFFECTATIONS: Affectation[] = [
     articleId: 'art-perceuse',
     articleDesignation: 'Perceuse à Percussion Bosch GSB 13 RE 650W',
     quantite: 1,
+    lignes: [
+      { articleId: 'art-perceuse', designation: 'Perceuse à Percussion Bosch GSB 13 RE 650W', quantite: 1 }
+    ],
     motif: 'Pose de goulottes et tableaux électriques',
     statut: 'Affecté',
     magasinierNom: 'Rachid Magasiner'
   }
 ];
 
-const DEFAULT_TRANSFERTS: Transfert[] = [
+export const DEFAULT_TRANSFERTS: Transfert[] = [
   {
     id: 'tr-1',
     code: 'TR-2026-001',
@@ -251,7 +257,7 @@ const DEFAULT_TRANSFERTS: Transfert[] = [
   }
 ];
 
-const DEFAULT_FACTURES: Facture[] = [
+export const DEFAULT_FACTURES: Facture[] = [
   {
     id: 'fac-1',
     code: 'FAC-2026-044',
@@ -270,7 +276,7 @@ const DEFAULT_FACTURES: Facture[] = [
   }
 ];
 
-const DEFAULT_PAIEMENTS: Paiement[] = [
+export const DEFAULT_PAIEMENTS: Paiement[] = [
   {
     id: 'pay-1',
     code: 'REG-2026-001',
@@ -325,6 +331,30 @@ export class MockDatabase {
   static setCurrentUser(user: UserProfile): void {
     localStorage.setItem('bgm_current_user', JSON.stringify(user));
     this.logAction(user.id, user.name, user.role, `Connexion de l'utilisateur ${user.name}`, 'auth', user.id);
+  }
+
+  // Admin helpers to grant/revoke privileges to users (local/demo only)
+  static addPrivilegeToUser(userId: string, privilege: string) {
+    const users = this.getUsers();
+    const idx = users.findIndex(u => u.id === userId);
+    if (idx === -1) throw new Error('Utilisateur non trouvé');
+    const u: any = users[idx];
+    u.privileges = Array.isArray(u.privileges) ? u.privileges : [];
+    if (!u.privileges.includes(privilege)) u.privileges.push(privilege);
+    users[idx] = u;
+    this.set('users', users);
+    return u;
+  }
+
+  static removePrivilegeFromUser(userId: string, privilege: string) {
+    const users = this.getUsers();
+    const idx = users.findIndex(u => u.id === userId);
+    if (idx === -1) throw new Error('Utilisateur non trouvé');
+    const u: any = users[idx];
+    u.privileges = Array.isArray(u.privileges) ? u.privileges.filter((p: string) => p !== privilege) : [];
+    users[idx] = u;
+    this.set('users', users);
+    return u;
   }
 
   static authenticateUser(email: string, password: string): UserProfile | null {
@@ -508,7 +538,47 @@ export class MockDatabase {
 
   // --- CRUD Magasins ---
   static getMagasins(): Magasin[] {
-    return this.get<Magasin>('magasins', DEFAULT_MAGASINS);
+    const stored = this.get<Magasin>('magasins', DEFAULT_MAGASINS);
+    const normalizeMagasinKey = (magasin: Partial<Magasin>) => {
+      const raw = [magasin.nom, magasin.ville, magasin.wilaya, magasin.code]
+        .filter((value): value is string => Boolean(value))
+        .map(value => value.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim())
+        .filter(Boolean)
+        .join(' ');
+
+      return raw
+        .replace(/\b(magasin|mag|depot|dépôt|depot|central|regional|principal|sud|nord|est|ouest)\b/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    };
+
+    const normalized = stored.reduce<Magasin[]>((acc, magasin) => {
+      const key = normalizeMagasinKey(magasin);
+      if (!key) {
+        acc.push(magasin);
+        return acc;
+      }
+
+      const existingIndex = acc.findIndex(item => normalizeMagasinKey(item) === key);
+
+      if (existingIndex === -1) {
+        acc.push(magasin);
+      } else {
+        acc[existingIndex] = {
+          ...acc[existingIndex],
+          ...magasin,
+          id: acc[existingIndex].id,
+          createdAt: acc[existingIndex].createdAt || magasin.createdAt
+        };
+      }
+      return acc;
+    }, []);
+
+    if (JSON.stringify(normalized) !== JSON.stringify(stored)) {
+      this.set('magasins', normalized);
+    }
+
+    return normalized;
   }
 
   static saveMagasin(magasin: Partial<Magasin>): Magasin {
@@ -516,12 +586,20 @@ export class MockDatabase {
     const currentUser = this.getCurrentUser();
     let result: Magasin;
 
-    if (magasin.id) {
-      const idx = list.findIndex(m => m.id === magasin.id);
-      const old = list[idx];
-      result = { ...old, ...magasin } as Magasin;
+    const existingById = magasin.id ? list.find(m => m.id === magasin.id) : undefined;
+    const existingByIdentity = !existingById && typeof magasin.nom === 'string' && magasin.nom.trim() !== ''
+      ? list.find(m => (m.nom || '').toLowerCase() === magasin.nom!.toLowerCase() || (m.code || '').toLowerCase() === (magasin.code || '').toLowerCase())
+      : undefined;
+
+    if (existingById || existingByIdentity) {
+      const existing = existingById || existingByIdentity;
+      if (!existing) {
+        throw new Error('Magasin existant introuvable.');
+      }
+      result = { ...existing, ...magasin } as Magasin;
+      const idx = list.findIndex(m => m.id === existing.id);
       list[idx] = result;
-      this.logAction(currentUser.id, currentUser.name, currentUser.role, `Modification du magasin ${result.nom}`, 'magasins', result.id, old, result);
+      this.logAction(currentUser.id, currentUser.name, currentUser.role, `Modification du magasin ${result.nom}`, 'magasins', result.id, existing, result);
     } else {
       result = {
         ...magasin,
@@ -531,7 +609,7 @@ export class MockDatabase {
       } as Magasin;
       list.push(result);
       this.logAction(currentUser.id, currentUser.name, currentUser.role, `Création du magasin ${result.nom}`, 'magasins', result.id, null, result);
-      
+
       // Initialize zero stocks for new magasin
       const articles = this.getArticles();
       const stocks = this.getStocks();
@@ -888,7 +966,7 @@ export class MockDatabase {
     // Check if fully received
     const allReceived = updatedLines.every(l => l.quantiteRecue >= l.quantite);
     const partiallyReceived = updatedLines.some(l => l.quantiteRecue > 0);
-    const newStatus: CommandeStatus = allReceived ? 'Reçu totalement' : (partiallyReceived ? 'Reçu partiellement' : 'Commandé');
+    const newStatus: CommandeStatus = allReceived ? 'Reçu totalement' : (partiallyReceived ? 'Reçu partiellement' : 'Validé');
 
     listCommandes[cIdx] = {
       ...commande,
@@ -930,10 +1008,10 @@ export class MockDatabase {
       const newFacture: Facture = {
         id: genId('fac'),
         code: invoiceRef.trim(),
-        fournisseurId: commande.fournisseurId,
-        fournisseurNom: commande.fournisseurNom,
-        commandeId: commande.id,
-        commandeCode: commande.code,
+        fournisseurId: commande.fournisseurId || '',
+        fournisseurNom: commande.fournisseurNom || 'Inconnu',
+        commandeId: commande.id || '',
+        commandeCode: commande.code || '',
         receptionId: reception.id,
         receptionCode: reception.code,
         dateFacture: new Date().toISOString(),
@@ -963,21 +1041,33 @@ export class MockDatabase {
     return this.get<Affectation>('affectations', DEFAULT_AFFECTATIONS);
   }
 
-  static createAffectation(employeId: string, chantierId: string, magasinId: string, articleId: string, quantite: number, motif: string): Affectation {
+  static createAffectation(affectationData: Partial<Affectation>): Affectation {
     const list = this.getAffectations();
     const currentUser = this.getCurrentUser();
-    
-    // Safety check: Stock availability
+    const lignes = (affectationData.lignes || []).filter(line => line.articleId && line.quantite > 0);
+
+    if (!affectationData.employeId || lignes.length === 0) {
+      throw new Error('Veuillez renseigner un bénéficiaire et au moins une ligne d\'article.');
+    }
+
+    const magasinId = affectationData.magasinId || currentUser.magasinId || '';
+    const employeId = affectationData.employeId;
+    const chantierId = affectationData.chantierId || '';
+    const magasinDestId = affectationData.magasinDestId || '';
+    const motif = affectationData.motif || '';
+
     const stocks = this.getStocks();
-    const stock = stocks.find(s => s.magasinId === magasinId && s.articleId === articleId);
-    if (!stock || stock.quantite < quantite) {
-      throw new Error(`Stock insuffisant. Disponible : ${stock ? stock.quantite : 0}`);
+    for (const ligne of lignes) {
+      const stock = stocks.find(s => s.magasinId === magasinId && s.articleId === ligne.articleId);
+      if (!stock || stock.quantite < ligne.quantite) {
+        throw new Error(`Stock insuffisant pour ${ligne.designation || 'cet article'}.`);
+      }
     }
 
     const employe = this.getEmployes().find(e => e.id === employeId);
     const chantier = this.getChantiers().find(c => c.id === chantierId);
-    const article = this.getArticles().find(a => a.id === articleId);
     const magasin = this.getMagasins().find(m => m.id === magasinId);
+    const magasinDest = magasinDestId ? this.getMagasins().find(m => m.id === magasinDestId) : undefined;
 
     const count = list.length + 1;
     const code = `BS-2026-${String(count).padStart(3, '0')}`;
@@ -987,37 +1077,52 @@ export class MockDatabase {
       code,
       employeId,
       employeNom: employe?.nom || 'Employé inconnu',
-      chantierId,
-      chantierNom: chantier?.nom || 'Chantier inconnu',
+      chantierId: chantierId || undefined,
+      chantierNom: chantier?.nom || undefined,
       magasinId,
       magasinNom: magasin?.nom || 'Magasin inconnu',
+      magasinDestId: magasinDestId || undefined,
+      magasinDestNom: magasinDest?.nom || undefined,
       dateAffectation: new Date().toISOString(),
-      articleId,
-      articleDesignation: article?.designation || 'Article inconnu',
-      quantite,
+      lignes,
       motif,
       statut: 'Affecté',
       magasinierNom: currentUser.name
     };
 
-    // Deduct Stock and record movement
-    this.updateStock(
-      magasinId,
-      articleId,
-      -quantite,
-      'SORTIE_AFFECTATION',
-      code,
-      `Affectation à ${employe?.nom} (${chantier?.nom})`
-    );
+    for (const ligne of lignes) {
+      const article = this.getArticles().find(a => a.id === ligne.articleId);
+      this.updateStock(
+        magasinId,
+        ligne.articleId,
+        -ligne.quantite,
+        'SORTIE_AFFECTATION',
+        code,
+        `Affectation à ${employe?.nom} (${chantier?.nom || magasinDest?.nom || 'destination'})`
+      );
+
+      if (magasinDestId) {
+        this.updateStock(
+          magasinDestId,
+          ligne.articleId,
+          ligne.quantite,
+          'ENTREE_TRANSFERT',
+          code,
+          `Entrée via BS de ${magasin?.nom || 'Magasin inconnu'}`
+        );
+      }
+
+      if (article) {
+        this.pushNotification(
+          'Matériel Affecté',
+          `Bon de sortie ${code} créé : ${ligne.quantite} ${article.unite} de ${article.designation} affecté(s) à ${employe?.nom}.`,
+          'info'
+        );
+      }
+    }
 
     list.push(affectation);
     this.set('affectations', list);
-
-    this.pushNotification(
-      'Matériel Affecté',
-      `Bon de sortie ${code} créé : ${quantite} ${article?.unite} de ${article?.designation} affecté(s) à ${employe?.nom}.`,
-      'info'
-    );
 
     this.logAction(currentUser.id, currentUser.name, currentUser.role, `Création affectation ${code} pour ${employe?.nom}`, 'affectations', affectation.id, null, affectation);
     return affectation;
@@ -1036,7 +1141,7 @@ export class MockDatabase {
     // Re-introduce Stock
     this.updateStock(
       aff.magasinId,
-      aff.articleId,
+      aff.articleId || '',
       quantiteRetournee,
       'CORRECTION_INVENTAIRE',
       aff.code,
@@ -1387,8 +1492,23 @@ export class MockDatabase {
     const list = this.getPaiements();
     const currentUser = this.getCurrentUser();
 
-    const fournisseur = this.getFournisseurs().find(f => f.id === fournisseurId);
-    if (!fournisseur) throw new Error('Fournisseur non trouvé');
+    let fournisseur: any = this.getFournisseurs().find(f => f.id === fournisseurId);
+    if (!fournisseur) {
+      // Create a temporary fournisseur entry in mock DB to allow demo payments
+      fournisseur = {
+        id: fournisseurId || genId('fou'),
+        nomSociete: 'Fournisseur temporaire',
+        rcNif: '',
+        telephone: '',
+        adresse: '',
+        contactNom: '',
+        solde: 0,
+        createdAt: new Date().toISOString()
+      } as any;
+      const fours = this.getFournisseurs();
+      fours.push(fournisseur);
+      this.set('fournisseurs', fours);
+    }
 
     const count = list.length + 1;
     const code = `REG-2026-${String(count).padStart(3, '0')}`;
@@ -1505,4 +1625,81 @@ export class MockDatabase {
       articlesCritiquesCount
     };
   }
+
+  static getInventaires(): Inventaire[] {
+    return this.get<Inventaire>('inventaires', []);
+  }
+
+  static createInventaire(magasinId: string, note?: string): Inventaire {
+    const list = this.getInventaires();
+    const currentUser = this.getCurrentUser();
+    const magasin = this.getMagasins().find(m => m.id === magasinId);
+    const articles = this.getArticles();
+    const stocks = this.getStocks().filter(s => s.magasinId === magasinId);
+
+    const count = list.length + 1;
+    const code = `INV-2026-${String(count).padStart(3, '0')}`;
+
+    const lignes: InventaireLigne[] = articles.map(art => {
+      const stk = stocks.find(s => s.articleId === art.id);
+      const quantiteTheorique = stk ? stk.quantite : 0;
+      return {
+        articleId: art.id,
+        designation: art.designation,
+        quantiteTheorique,
+        quantiteReelle: quantiteTheorique,
+        ecart: 0
+      };
+    });
+
+    const inv: Inventaire = {
+      id: genId('inv'),
+      code,
+      magasinId,
+      magasinNom: magasin?.nom || 'Dépôt',
+      dateInventaire: new Date().toISOString(),
+      statut: 'Brouillon',
+      lignes,
+      creeParNom: currentUser.name,
+      note
+    };
+
+    list.unshift(inv);
+    this.set('inventaires', list);
+    return inv;
+  }
+
+  static validateInventaire(inventaireId: string, updatedLignes: InventaireLigne[]): boolean {
+    const list = this.getInventaires();
+    const idx = list.findIndex(i => i.id === inventaireId);
+    if (idx === -1) return false;
+
+    const inv = list[idx];
+    const currentUser = this.getCurrentUser();
+
+    for (const line of updatedLignes) {
+      const ecart = line.quantiteReelle - line.quantiteTheorique;
+      line.ecart = ecart;
+
+      if (ecart !== 0) {
+        this.updateStock(
+          inv.magasinId,
+          line.articleId,
+          line.quantiteReelle,
+          ecart > 0 ? 'ENTREE_INVENTAIRE' as any : 'SORTIE_INVENTAIRE' as any,
+          inv.code,
+          `Régularisation inventaire (${ecart > 0 ? '+' : ''}${ecart})`
+        );
+      }
+    }
+
+    inv.lignes = updatedLignes;
+    inv.statut = 'Validé';
+    inv.valideParNom = currentUser.name;
+
+    list[idx] = inv;
+    this.set('inventaires', list);
+    return true;
+  }
 }
+

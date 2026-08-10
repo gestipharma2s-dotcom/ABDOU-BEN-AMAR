@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS articles (
   categorie text,
   unite text,
   stock_minimum integer DEFAULT 0,
-  prix_moyen numeric DEFAULT 0,
+  prix_moyen float DEFAULT 0,
   photo_url text,
   qr_code text,
   created_at timestamptz DEFAULT now()
@@ -210,6 +210,7 @@ CREATE TABLE IF NOT EXISTS paiements (
   reference_transaction text,
   note text,
   facture_id uuid REFERENCES factures(id),
+  reception_ids uuid[] DEFAULT '{}',
   date_paiement timestamptz DEFAULT now(),
   code text,
   comptable_nom text,
@@ -279,3 +280,29 @@ WHERE m.actif = true;
 -- Note: For Supabase Auth integration, prefer using the Auth schema and store user profiles in a separate table linked to auth.users.
 
 -- End of script
+
+-- ============================================================
+-- TABLE: inventaires (ajout�e post-d�ploiement)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS inventaires (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  code            TEXT NOT NULL,
+  magasin_id      UUID REFERENCES magasins(id) ON DELETE SET NULL,
+  magasin_nom     TEXT,
+  date_inventaire TIMESTAMPTZ NOT NULL DEFAULT now(),
+  note            TEXT,
+  statut          TEXT NOT NULL DEFAULT 'Brouillon'
+                    CHECK (statut IN ('Brouillon', 'Valid�', 'Annul�')),
+  lignes          JSONB NOT NULL DEFAULT '[]'::JSONB,
+  created_by_id   UUID,
+  created_by_nom  TEXT,
+  validated_at    TIMESTAMPTZ,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_inventaires_magasin ON inventaires(magasin_id);
+CREATE INDEX IF NOT EXISTS idx_inventaires_date    ON inventaires(date_inventaire DESC);
+
+ALTER TABLE inventaires ENABLE ROW LEVEL SECURITY;
+CREATE POLICY IF NOT EXISTS Read inventaires  ON inventaires FOR SELECT USING (true);
+CREATE POLICY IF NOT EXISTS Write inventaires ON inventaires FOR ALL    USING (true);

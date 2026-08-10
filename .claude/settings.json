@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -e ' *)",
+      "Bash(npm run *)",
+      "Bash(node tmp_claude_test_dup.mjs)",
+      "Bash(node tmp_claude_repair.mjs)",
+      "Bash(rm -f tmp_claude_repair.mjs)",
+      "Bash(node tmp_claude_test_delfac.mjs)",
+      "Bash(node tmp_claude_test_lot1.mjs)",
+      "Bash(node \"C:/Users/boss/AppData/Local/Temp/claude/d--ABDOU-BEN-AMAR/ff8bbf3c-7685-4383-9443-9a306a7f0e1b/scratchpad/build-pdf.mjs\")",
+      "Bash(node \"C:/Users/boss/AppData/Local/Temp/claude/d--ABDOU-BEN-AMAR/ff8bbf3c-7685-4383-9443-9a306a7f0e1b/scratchpad/verif-dom.mjs\")",
+      "Bash(node scripts/build-workflow-pdf.mjs)",
+      "PowerShell(npx tsc -b 2>&1)",
+      "PowerShell(npx eslint src/App.tsx 2>&1)",
+      "Bash(node -e \"const s=require\\('fs'\\).readFileSync\\('src/App.tsx','utf8'\\); const m=s.match\\(/\\\\.replace\\\\\\(\\(\\\\/\\\\[[^]]*\\\\]\\\\/g\\), ''\\\\\\)/\\); console.log\\(JSON.stringify\\(m&&m[1]\\)\\); const re=eval\\(m[1]\\); console.log\\('Béjaïa'.toLowerCase\\(\\).normalize\\('NFD'\\).replace\\(re,''\\)\\); console.log\\('Reçu'.toLowerCase\\(\\).normalize\\('NFD'\\).replace\\(re,''\\)\\);\")",
+      "PowerShell(node \"C:\\\\Users\\\\boss\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--ABDOU-BEN-AMAR\\\\758c88df-5474-49bb-a747-4863adcbb6c9\\\\scratchpad\\\\probe-commandes.mjs\" 2>&1)",
+      "PowerShell(node tmp_probe_commandes.mjs 2>&1)",
+      "PowerShell(node tmp_probe_users.mjs 2>&1)",
+      "Bash(grep -n \"className=\\\\\"app-container\\\\|className={\\\\`app\\\\|<div className=\\\\\"app\" src/App.tsx)"
+    ]
+  }
+}

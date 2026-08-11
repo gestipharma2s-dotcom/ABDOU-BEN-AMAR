@@ -7,11 +7,18 @@ on:
 
   workflow_dispatch:
 
+# Autorise le workflow à supprimer les anciennes exécutions
+permissions:
+  actions: write
+
 jobs:
   keep-alive:
     runs-on: ubuntu-latest
 
     steps:
+      # ============================================================
+      # 1. TEST SUPABASE
+      # ============================================================
       - name: Ping Supabase Keep Alive
         shell: bash
         run: |
@@ -60,3 +67,44 @@ jobs:
 
           echo ""
           echo "🎉 Supabase est opérationnel."
+
+      # ============================================================
+      # 2. SUPPRESSION DES ANCIENNES EXÉCUTIONS
+      # ============================================================
+      - name: Supprimer les anciennes exécutions
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CURRENT_RUN_ID: ${{ github.run_id }}
+        run: |
+          echo "==========================================="
+          echo "NETTOYAGE DE L'HISTORIQUE GITHUB ACTIONS"
+          echo "==========================================="
+
+          echo "Exécution actuelle : $CURRENT_RUN_ID"
+
+          RUN_IDS=$(gh api \
+            --paginate \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/keep-alive.yml/runs?per_page=100" \
+            --jq ".workflow_runs[] | select(.id != $CURRENT_RUN_ID) | .id")
+
+          if [ -z "$RUN_IDS" ]; then
+            echo "✅ Aucune ancienne exécution à supprimer."
+            exit 0
+          fi
+
+          for RUN_ID in $RUN_IDS; do
+            echo "🗑️ Suppression de l'exécution : $RUN_ID"
+
+            gh api \
+              --method DELETE \
+              "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}"
+
+            echo "✅ Exécution $RUN_ID supprimée."
+          done
+
+          echo ""
+          echo "==========================================="
+          echo "✅ HISTORIQUE NETTOYÉ"
+          echo "==========================================="

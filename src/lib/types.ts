@@ -192,6 +192,9 @@ export interface Employe {
   telephone: string;
   chantierId?: string;
   chantierNom?: string;
+  // Un employé référencé par un bon de sortie ne peut pas être supprimé :
+  // il est alors désactivé (sorti des effectifs) et masqué des listes de saisie.
+  actif?: boolean;
 }
 
 export interface Chantier {

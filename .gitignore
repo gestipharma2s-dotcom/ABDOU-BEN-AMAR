@@ -7,6 +7,14 @@
 # Sondes de schéma jetables issues de débogages
 tmp_*.mjs
 
+# Sauvegardes de la base (npm run backup-db) : copie intégrale des données,
+# mots de passe en clair compris. Ne doit jamais partir sur le dépôt.
+backups/
+*.dump
+sauvegarde-bgm-*.json
+# Enveloppe générée par `npm run schedule-backup` : chemins absolus propres au poste.
+scripts/backup-auto.cmd
+
 # Fichiers parasites de 0 octet créés par des commandes shell mal formées
 ({
 ({msg

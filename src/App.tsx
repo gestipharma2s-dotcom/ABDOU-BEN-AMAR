@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Building2, Package, Truck, ShoppingCart, ShieldCheck, 
   Users, RefreshCw, Landmark, BarChart3, Search, 
   Plus, Edit, Trash, Printer, QrCode, ClipboardList,
   ChevronRight, ChevronDown, Info, Moon, Sun,
   Folder, FileText, CheckSquare, LogOut, Lock, Mail, Eye, EyeOff, AlertCircle,
-  AlertTriangle
+  AlertTriangle, Database, Download
 } from 'lucide-react';
 import { SupabaseDatabase } from './lib/supabaseDb';
 import type { 
@@ -14,6 +14,73 @@ import type {
   Employe, Chantier, Transfert, Paiement, ModePaiement, Facture, Inventaire, InventaireLigne,
   Societe
 } from './lib/types';
+
+// ── PLANIFICATEUR DE SAUVEGARDE ───────────────────────────────────────────────
+// Réglage volontairement local au poste (localStorage) et non en base : c'est ce
+// navigateur-là qui télécharge le fichier, deux postes peuvent donc avoir des
+// rythmes différents. Pour une sauvegarde qui tourne application fermée, voir
+// `npm run schedule-backup` (tâche Windows appelant pg_dump).
+type FrequenceSauvegarde = 'quotidienne' | 'hebdomadaire' | 'mensuelle';
+
+interface PlanSauvegarde {
+  actif: boolean;
+  frequence: FrequenceSauvegarde;
+  format: 'sql' | 'json';
+  mode: 'auto' | 'rappel';
+  derniereExecution: string | null;
+}
+
+const CLE_PLAN_SAUVEGARDE = 'bgm_plan_sauvegarde';
+
+const PLAN_SAUVEGARDE_DEFAUT: PlanSauvegarde = {
+  actif: false,
+  frequence: 'hebdomadaire',
+  format: 'sql',
+  mode: 'rappel',
+  derniereExecution: null
+};
+
+const JOURS_FREQUENCE: Record<FrequenceSauvegarde, number> = {
+  quotidienne: 1,
+  hebdomadaire: 7,
+  mensuelle: 30
+};
+
+function lirePlanSauvegarde(): PlanSauvegarde {
+  try {
+    const brut = localStorage.getItem(CLE_PLAN_SAUVEGARDE);
+    if (!brut) return { ...PLAN_SAUVEGARDE_DEFAUT };
+    // Fusion avec les valeurs par défaut : un réglage écrit par une version
+    // antérieure ne doit pas laisser de champ indéfini.
+    return { ...PLAN_SAUVEGARDE_DEFAUT, ...JSON.parse(brut) };
+  } catch {
+    return { ...PLAN_SAUVEGARDE_DEFAUT };
+  }
+}
+
+function ecrirePlanSauvegarde(plan: PlanSauvegarde) {
+  try {
+    localStorage.setItem(CLE_PLAN_SAUVEGARDE, JSON.stringify(plan));
+  } catch (err) {
+    console.error('Enregistrement du plan de sauvegarde impossible:', err);
+  }
+}
+
+const prochaineEcheance = (plan: PlanSauvegarde): Date | null => {
+  if (!plan.derniereExecution) return null;
+  const date = new Date(plan.derniereExecution);
+  if (Number.isNaN(date.getTime())) return null;
+  date.setDate(date.getDate() + JOURS_FREQUENCE[plan.frequence]);
+  return date;
+};
+
+// Jamais exécutée = due immédiatement : sans cela, activer le planificateur
+// n'aurait aucun effet visible avant la première sauvegarde manuelle.
+const sauvegardeEstDue = (plan: PlanSauvegarde): boolean => {
+  if (!plan.actif) return false;
+  const echeance = prochaineEcheance(plan);
+  return echeance === null || echeance.getTime() <= Date.now();
+};
 
 export default function App() {
   // --- Auth States ---
@@ -64,11 +131,35 @@ export default function App() {
   const [factures, setFactures] = useState<Facture[]>([]);
   const [inventaires, setInventaires] = useState<Inventaire[]>([]);
   const [inventairesReady, setInventairesReady] = useState<boolean>(false);
+  // Employés / chantiers : tables optionnelles (db/create_employes_chantiers.sql). Si elles
+  // sont absentes, les listes codées en dur restent affichées mais en lecture seule.
+  const [employesReady, setEmployesReady] = useState<boolean>(true);
+  const [chantiersReady, setChantiersReady] = useState<boolean>(true);
   // Fiche société : identité et coordonnées de l'entreprise (une seule ligne en base)
   const [societe, setSociete] = useState<Societe | null>(null);
   const [societeReady, setSocieteReady] = useState<boolean>(true);
   const [societeForm, setSocieteForm] = useState<Partial<Societe>>({});
   const [isSavingSociete, setIsSavingSociete] = useState(false);
+  // Sauvegarde de la base : export JSON téléchargé sur le poste de l'utilisateur
+  const [sauvegardeEnCours, setSauvegardeEnCours] = useState(false);
+  const [sauvegardeEtape, setSauvegardeEtape] = useState<string>('');
+  const [sauvegardeMotsDePasse, setSauvegardeMotsDePasse] = useState(false);
+  const [derniereSauvegarde, setDerniereSauvegarde] = useState<{
+    fichier: string;
+    date: string;
+    lignes: number;
+    poids: string;
+    statistiques: Record<string, number>;
+    tablesAbsentes: string[];
+    erreurs: { table: string; message: string }[];
+  } | null>(null);
+
+  // Planificateur de sauvegarde : le navigateur ne peut agir que lorsque l'application
+  // est ouverte. Le réglage est donc local au poste (localStorage) et l'échéance est
+  // évaluée à l'ouverture, pas par une minuterie qui tournerait en arrière-plan.
+  const [planSauvegarde, setPlanSauvegarde] = useState<PlanSauvegarde>(() => lirePlanSauvegarde());
+  const [sauvegardeDue, setSauvegardeDue] = useState(false);
+  const planExecuteRef = useRef(false);
 
   
   // UI States & Selections
@@ -104,6 +195,15 @@ export default function App() {
   
   const [articleModalOpen, setArticleModalOpen] = useState(false);
   const [selectedArticle, setSelectedArticle] = useState<Partial<Article> | null>(null);
+
+  // Page « Employés & Chantiers » : deux grilles côte à côte, donc deux sélections
+  // distinctes plutôt que le `selectedRowId` global partagé par les autres pages.
+  const [employeModalOpen, setEmployeModalOpen] = useState(false);
+  const [selectedEmploye, setSelectedEmploye] = useState<Partial<Employe> | null>(null);
+  const [employeRowId, setEmployeRowId] = useState<string | null>(null);
+  const [chantierModalOpen, setChantierModalOpen] = useState(false);
+  const [selectedChantier, setSelectedChantier] = useState<Partial<Chantier> | null>(null);
+  const [chantierRowId, setChantierRowId] = useState<string | null>(null);
 
   const [createInventaireModalOpen, setCreateInventaireModalOpen] = useState(false);
   const [inventaireMagasinId, setInventaireMagasinId] = useState('');
@@ -206,8 +306,14 @@ export default function App() {
     SupabaseDatabase.getMagasins().then(setMagasins).catch(err => console.error('getMagasins:', err));
     SupabaseDatabase.getArticles().then(setArticles).catch(err => console.error('getArticles:', err));
     SupabaseDatabase.getFournisseurs().then(setFournisseurs).catch(err => console.error('getFournisseurs:', err));
-    SupabaseDatabase.getEmployes().then(setEmployes).catch(err => console.error('getEmployes:', err));
-    SupabaseDatabase.getChantiers().then(setChantiers).catch(err => console.error('getChantiers:', err));
+    SupabaseDatabase.getEmployes().then(list => {
+      setEmployes(list);
+      setEmployesReady(SupabaseDatabase.isEmployesAvailable);
+    }).catch(err => console.error('getEmployes:', err));
+    SupabaseDatabase.getChantiers().then(list => {
+      setChantiers(list);
+      setChantiersReady(SupabaseDatabase.isChantiersAvailable);
+    }).catch(err => console.error('getChantiers:', err));
     SupabaseDatabase.getStocks().then(setStocks).catch(err => console.error('getStocks:', err));
     SupabaseDatabase.getMouvementsStock().then(setMouvements).catch(err => console.error('getMouvementsStock:', err));
     SupabaseDatabase.getCommandes().then(setCommandes).catch(err => console.error('getCommandes:', err));
@@ -272,6 +378,8 @@ export default function App() {
   const switchTab = (tab: string) => {
     setActiveTab(tab);
     setSelectedRowId(null);
+    setEmployeRowId(null);
+    setChantierRowId(null);
     // La recherche porte sur la page courante : la conserver d'un onglet à l'autre donnait
     // des journaux vides sans raison apparente (« la recherche ne marche pas »).
     setSearchQuery('');
@@ -407,6 +515,253 @@ export default function App() {
         alert(err instanceof Error ? err.message : 'Une erreur est survenue');
       }
     }
+  };
+
+  // ── EMPLOYÉS & CHANTIERS ────────────────────────────────────────────────────
+  // Le fichier du personnel et la liste des chantiers sont tenus par la direction et
+  // les chefs de chantier ; les autres rôles consultent la page sans pouvoir la modifier.
+  // 'directeur' / 'responsable' sont les alias hérités de 'direction' dans UserRole.
+  const peutGererPersonnel = ['direction', 'directeur', 'responsable', 'chef_chantier'].includes(currentUser.role);
+
+  // Numéro algérien : mobile 0[5-7] + 8 chiffres, ou fixe 0[2-4] + 7 chiffres.
+  const telephoneValide = (tel: string) => {
+    const chiffres = (tel || '').replace(/\D/g, '');
+    return /^0[5-7]\d{8}$/.test(chiffres) || /^0[2-4]\d{7}$/.test(chiffres);
+  };
+
+  const NOTICE_TABLES_RH =
+    'Les tables « employes » et « chantiers » sont absentes de la base : la page reste en lecture seule.\n\n' +
+    'Exécutez le script db/create_employes_chantiers.sql dans l\'éditeur SQL Supabase, puis actualisez.';
+
+  const refuserSiLectureSeule = (pret: boolean) => {
+    if (!peutGererPersonnel) {
+      alert('⛔ Action réservée à la direction et aux chefs de chantier.');
+      return true;
+    }
+    if (!pret) {
+      alert('⚠️ ' + NOTICE_TABLES_RH);
+      return true;
+    }
+    return false;
+  };
+
+  const openEmployeModal = (emp?: Employe) => {
+    if (refuserSiLectureSeule(employesReady)) return;
+    setSelectedEmploye(emp ? { ...emp } : { actif: true, chantierId: '' });
+    setEmployeModalOpen(true);
+  };
+
+  const handleEditEmploye = () => {
+    const emp = employes.find(e => e.id === employeRowId);
+    if (!emp) {
+      alert('Veuillez d\'abord sélectionner un employé dans la liste.');
+      return;
+    }
+    openEmployeModal(emp);
+  };
+
+  const handleSaveEmploye = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedEmploye || isSubmitting) return;
+
+    const nom = (selectedEmploye.nom || '').trim();
+    if (nom.length < 3) {
+      alert('Le nom & prénom de l\'employé est obligatoire (3 caractères minimum).');
+      return;
+    }
+    // Unicité : contrôle immédiat sur la liste chargée, doublé en base par un index unique.
+    const doublon = employes.find(
+      emp => emp.id !== selectedEmploye.id && normalizeSearch(emp.nom).trim() === normalizeSearch(nom).trim()
+    );
+    if (doublon) {
+      alert(`⛔ Doublon détecté\n\nUn employé nommé « ${doublon.nom} » figure déjà au fichier du personnel.`);
+      return;
+    }
+    if (!telephoneValide(selectedEmploye.telephone || '')) {
+      alert(
+        'Numéro de téléphone invalide.\n\n' +
+        'Formats attendus :\n• Mobile : 0555 12 34 56 (10 chiffres, 05/06/07)\n• Fixe : 021 23 45 67 (9 chiffres, 02/03/04)'
+      );
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      await SupabaseDatabase.saveEmploye({ ...selectedEmploye, nom, chantierId: selectedEmploye.chantierId || undefined });
+      setEmployeModalOpen(false);
+      setSelectedEmploye(null);
+      await reloadData();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Une erreur est survenue');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleDeleteEmploye = async () => {
+    if (refuserSiLectureSeule(employesReady)) return;
+    const emp = employes.find(e => e.id === employeRowId);
+    if (!emp) {
+      alert('Veuillez d\'abord sélectionner un employé dans la liste.');
+      return;
+    }
+
+    // Un employé qui figure sur un bon de sortie ne peut pas disparaître : le document
+    // resterait avec un signataire introuvable. On propose la sortie des effectifs.
+    const affLiees = affectations.filter(a => a.employeId === emp.id);
+    if (affLiees.length > 0) {
+      const codes = affLiees.slice(0, 5).map(a => a.code).filter(Boolean);
+      const suite = affLiees.length > 5 ? `\n• … et ${affLiees.length - 5} autre(s)` : '';
+      if (emp.actif === false) {
+        alert(
+          '⛔ Suppression impossible — Employé référencé\n\n' +
+          `« ${emp.nom} » figure sur ${affLiees.length} bon(s) de sortie matériel :\n• ${codes.join('\n• ')}${suite}\n\n` +
+          'Il est déjà sorti des effectifs : son historique est conservé.'
+        );
+        return;
+      }
+      const desactiver = window.confirm(
+        '⛔ Suppression impossible — Employé référencé\n\n' +
+        `« ${emp.nom} » figure sur ${affLiees.length} bon(s) de sortie matériel :\n• ${codes.join('\n• ')}${suite}\n\n` +
+        'Voulez-vous le sortir des effectifs ? Il disparaîtra des listes de saisie mais restera lisible dans l\'historique.'
+      );
+      if (!desactiver) return;
+      try {
+        await SupabaseDatabase.saveEmploye({ ...emp, actif: false });
+        setEmployeRowId(null);
+        await reloadData();
+      } catch (err) {
+        alert(err instanceof Error ? err.message : 'Une erreur est survenue');
+      }
+      return;
+    }
+
+    if (!window.confirm(
+      `Supprimer définitivement l'employé « ${emp.nom} » (${emp.fonction}) ?\n\nCette action est irréversible.`
+    )) return;
+
+    const res = await SupabaseDatabase.deleteEmploye(emp.id);
+    if (!res.success) {
+      alert('⛔ Suppression impossible\n\n' + (res.raison || 'Erreur inconnue.'));
+      return;
+    }
+    setEmployeRowId(null);
+    await reloadData();
+  };
+
+  // Bascule « en poste » / « sorti des effectifs » sans passer par la modale.
+  const handleToggleEmployeActif = async () => {
+    if (refuserSiLectureSeule(employesReady)) return;
+    const emp = employes.find(e => e.id === employeRowId);
+    if (!emp) {
+      alert('Veuillez d\'abord sélectionner un employé dans la liste.');
+      return;
+    }
+    const actifCible = emp.actif === false;
+    if (!window.confirm(
+      actifCible
+        ? `Réintégrer « ${emp.nom} » dans les effectifs ?`
+        : `Sortir « ${emp.nom} » des effectifs ?\n\nIl ne sera plus proposé sur les bons de sortie matériel.`
+    )) return;
+    try {
+      await SupabaseDatabase.saveEmploye({ ...emp, actif: actifCible });
+      await reloadData();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Une erreur est survenue');
+    }
+  };
+
+  const openChantierModal = (cha?: Chantier) => {
+    if (refuserSiLectureSeule(chantiersReady)) return;
+    setSelectedChantier(cha ? { ...cha } : { actif: true });
+    setChantierModalOpen(true);
+  };
+
+  const handleEditChantier = () => {
+    const cha = chantiers.find(c => c.id === chantierRowId);
+    if (!cha) {
+      alert('Veuillez d\'abord sélectionner un chantier dans la liste.');
+      return;
+    }
+    openChantierModal(cha);
+  };
+
+  const handleSaveChantier = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedChantier || isSubmitting) return;
+
+    const nom = (selectedChantier.nom || '').trim();
+    if (nom.length < 3) {
+      alert('La désignation du chantier est obligatoire (3 caractères minimum).');
+      return;
+    }
+    const doublon = chantiers.find(
+      cha => cha.id !== selectedChantier.id && normalizeSearch(cha.nom).trim() === normalizeSearch(nom).trim()
+    );
+    if (doublon) {
+      alert(`⛔ Doublon détecté\n\nUn chantier nommé « ${doublon.nom} » existe déjà.`);
+      return;
+    }
+
+    // Clôturer un chantier (passage en « Livré ») laisse ses employés sans site actif :
+    // on l'annonce avant, la réaffectation restant à la main du responsable.
+    const ancien = chantiers.find(c => c.id === selectedChantier.id);
+    if (ancien && ancien.actif && selectedChantier.actif === false) {
+      const empLies = employes.filter(emp => emp.chantierId === ancien.id && emp.actif !== false);
+      if (empLies.length > 0 && !window.confirm(
+        `Marquer « ${ancien.nom} » comme livré ?\n\n` +
+        `${empLies.length} employé(s) y sont encore affectés :\n• ${empLies.map(emp => emp.nom).join('\n• ')}\n\n` +
+        'Ils resteront rattachés à ce chantier tant qu\'ils ne seront pas réaffectés, et le chantier ne sera plus proposé sur les bons de sortie.'
+      )) return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      await SupabaseDatabase.saveChantier({ ...selectedChantier, nom });
+      setChantierModalOpen(false);
+      setSelectedChantier(null);
+      await reloadData();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Une erreur est survenue');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleDeleteChantier = async () => {
+    if (refuserSiLectureSeule(chantiersReady)) return;
+    const cha = chantiers.find(c => c.id === chantierRowId);
+    if (!cha) {
+      alert('Veuillez d\'abord sélectionner un chantier dans la liste.');
+      return;
+    }
+
+    const empLies = employes.filter(emp => emp.chantierId === cha.id);
+    const affLiees = affectations.filter(a => a.chantierId === cha.id);
+    if (empLies.length > 0 || affLiees.length > 0) {
+      const details: string[] = [];
+      if (empLies.length > 0) details.push(`• ${empLies.length} employé(s) affecté(s) : ${empLies.map(emp => emp.nom).join(', ')}`);
+      if (affLiees.length > 0) details.push(`• ${affLiees.length} bon(s) de sortie matériel : ${affLiees.slice(0, 5).map(a => a.code).filter(Boolean).join(', ')}`);
+      alert(
+        '⛔ Suppression impossible — Chantier référencé\n\n' +
+        `« ${cha.nom} » est encore lié à :\n\n` + details.join('\n') +
+        '\n\nRéaffectez les employés concernés. Les bons déjà émis, eux, ne peuvent pas être déliés : ' +
+        'marquez alors le chantier comme « Livré » (décochez « Chantier actif ») au lieu de le supprimer.'
+      );
+      return;
+    }
+
+    if (!window.confirm(
+      `Supprimer définitivement le chantier « ${cha.nom} » (${cha.wilaya}) ?\n\nCette action est irréversible.`
+    )) return;
+
+    const res = await SupabaseDatabase.deleteChantier(cha.id);
+    if (!res.success) {
+      alert('⛔ Suppression impossible\n\n' + (res.raison || 'Erreur inconnue.'));
+      return;
+    }
+    setChantierRowId(null);
+    await reloadData();
   };
 
   const handleCreateCommande = async (e: React.FormEvent) => {
@@ -1260,6 +1615,118 @@ export default function App() {
     setPrintDoc({ type: 'facture', data: fac, lignes, reglements });
   };
 
+  // ── SAUVEGARDE DE LA BASE ───────────────────────────────────────────────────
+  // Copie intégrale des tables Supabase dans un fichier JSON téléchargé localement.
+  // Aucune écriture n'est faite : c'est un export de sécurité, pas une migration.
+  // `auto` : déclenchement par le planificateur. Aucune boîte de dialogue ne doit
+  // s'interposer, et les mots de passe restent masqués quel que soit le réglage
+  // de la case — personne n'est là pour valider un export sensible.
+  const handleTelechargerSauvegarde = async (format: 'json' | 'sql', auto = false) => {
+    if (currentUser.role !== 'direction' && currentUser.role !== 'directeur') {
+      if (!auto) alert('⛔ La sauvegarde de la base est réservée à la direction.');
+      return;
+    }
+    if (sauvegardeEnCours) return;
+
+    const inclureMotsDePasse = sauvegardeMotsDePasse && !auto;
+
+    if (inclureMotsDePasse && !window.confirm(
+      '⚠️ Les mots de passe des utilisateurs sont stockés en clair.\n\n' +
+      'Le fichier téléchargé contiendra donc tous les identifiants de connexion.\n' +
+      'Conservez-le sur un support sûr (disque chiffré, coffre-fort numérique).\n\n' +
+      'Continuer avec les mots de passe inclus ?'
+    )) return;
+
+    setSauvegardeEnCours(true);
+    setSauvegardeEtape('Préparation…');
+    try {
+      const options = {
+        inclureMotsDePasse,
+        onProgress: (table: string, index: number, total: number) => {
+          setSauvegardeEtape(table ? `Lecture de « ${table} » (${index + 1}/${total})…` : 'Génération du fichier…');
+        }
+      };
+
+      const sauvegarde = format === 'sql'
+        ? await SupabaseDatabase.exporterSauvegardeSQL(options)
+        : await SupabaseDatabase.exporterSauvegarde(options);
+
+      const contenu = format === 'sql'
+        ? (sauvegarde as { sql: string }).sql
+        : JSON.stringify(sauvegarde, null, 2);
+
+      const maintenant = new Date();
+      const horodatage =
+        `${maintenant.getFullYear()}${String(maintenant.getMonth() + 1).padStart(2, '0')}${String(maintenant.getDate()).padStart(2, '0')}` +
+        `-${String(maintenant.getHours()).padStart(2, '0')}${String(maintenant.getMinutes()).padStart(2, '0')}`;
+      const fichier = `sauvegarde-bgm-${horodatage}.${format}`;
+
+      const blob = new Blob([contenu], {
+        type: format === 'sql' ? 'application/sql;charset=utf-8;' : 'application/json;charset=utf-8;'
+      });
+      const url = URL.createObjectURL(blob);
+      const lien = document.createElement('a');
+      lien.href = url;
+      lien.download = fichier;
+      lien.click();
+      URL.revokeObjectURL(url);
+
+      const poidsKo = blob.size / 1024;
+      setDerniereSauvegarde({
+        fichier,
+        date: maintenant.toLocaleString('fr-FR'),
+        lignes: sauvegarde.meta.nombreLignesTotal,
+        poids: poidsKo > 1024 ? `${(poidsKo / 1024).toFixed(2)} Mo` : `${poidsKo.toFixed(1)} Ko`,
+        statistiques: sauvegarde.statistiques,
+        tablesAbsentes: sauvegarde.tablesAbsentes,
+        erreurs: sauvegarde.erreurs
+      });
+
+      // Une sauvegarde manuelle remet aussi le compteur à zéro : inutile d'en
+      // réclamer une le lendemain si l'utilisateur vient d'en faire une.
+      const planMaj = { ...planSauvegarde, derniereExecution: maintenant.toISOString() };
+      setPlanSauvegarde(planMaj);
+      ecrirePlanSauvegarde(planMaj);
+      setSauvegardeDue(false);
+
+      if (sauvegarde.erreurs.length > 0) {
+        alert(
+          '⚠️ Sauvegarde téléchargée, mais certaines tables n\'ont pas pu être lues :\n\n' +
+          sauvegarde.erreurs.map(e => `• ${e.table} : ${e.message}`).join('\n') +
+          '\n\nCes tables sont absentes du fichier. Vérifiez les droits (RLS) puis relancez la sauvegarde.'
+        );
+      }
+    } catch (err) {
+      alert('⛔ Échec de la sauvegarde\n\n' + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setSauvegardeEnCours(false);
+      setSauvegardeEtape('');
+    }
+  };
+
+  // Planificateur : l'échéance est évaluée une seule fois par session, à l'ouverture.
+  // Pas de minuterie répétée — un onglet laissé ouvert plusieurs jours déclencherait
+  // des téléchargements sans personne devant l'écran.
+  // Déclaré ici, après handleTelechargerSauvegarde, pour ne pas le référencer avant
+  // son initialisation.
+  useEffect(() => {
+    if (!isAuthenticated || planExecuteRef.current) return;
+    if (currentUser.role !== 'direction' && currentUser.role !== 'directeur') return;
+    if (!sauvegardeEstDue(planSauvegarde)) return;
+
+    planExecuteRef.current = true;
+    // Différé : laisse le chargement initial se terminer avant de relire toutes les tables.
+    const minuterie = setTimeout(() => {
+      if (planSauvegarde.mode === 'auto') void handleTelechargerSauvegarde(planSauvegarde.format, true);
+      else setSauvegardeDue(true);
+    }, planSauvegarde.mode === 'auto' ? 4000 : 1200);
+    return () => clearTimeout(minuterie);
+    // handleTelechargerSauvegarde est volontairement hors des dépendances : son identité
+    // change à chaque rendu, l'effet serait rejoué et son nettoyage annulerait la minuterie
+    // avant qu'elle n'arrive à échéance. Le garde planExecuteRef assure l'exécution unique.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated, planSauvegarde, currentUser.role]);
+
   const handleGenericExport = () => {
     // Basic CSV helper to export current filter items
     const escapeCsv = (val: string) => `"${val.replace(/"/g, '""')}"`;
@@ -1448,7 +1915,7 @@ export default function App() {
     achats: { groupe: 'Comptoir / Achats', noeuds: ["Demandes d'Achat", 'DA', 'Réceptions BL', 'Fournisseurs'] },
     chantiers: { groupe: 'Chantiers & Logistique', noeuds: ['Affectations Matériel', 'Employés & Chantiers', 'Transferts Inter-Mag'] },
     compta: { groupe: 'Comptabilité & Analyses', noeuds: ["Factures d'Achats", 'Règlements Fournisseurs', 'Rapports & Graphiques'] },
-    admin: { groupe: 'Administration', noeuds: ['Utilisateurs & Droits', 'Société — Infos & Coordonnées', 'entreprise', 'coordonnées'] }
+    admin: { groupe: 'Administration', noeuds: ['Utilisateurs & Droits', 'Société — Infos & Coordonnées', 'entreprise', 'coordonnées', 'Sauvegarde de la Base', 'backup', 'export', 'archive'] }
   };
 
   const treeGroupVisible = (key: keyof typeof TREE_MENU | string) => {
@@ -1510,6 +1977,7 @@ export default function App() {
       case 'audit': return 'Journal d\'Audit';
       case 'societe': return 'Société';
       case 'users': return 'Utilisateurs & Droits';
+      case 'sauvegarde': return 'Sauvegarde de la Base';
       default: return tab;
     }
   };
@@ -1917,6 +2385,10 @@ export default function App() {
                       <Building2 size={12} style={{ color: '#00bcd4' }} />
                       <span>Société — Infos & Coordonnées</span>
                     </div>
+                    <div className={`tree-node ${activeTab === 'sauvegarde' ? 'active' : ''}`} onClick={() => switchTab('sauvegarde')}>
+                      <Database size={12} style={{ color: '#4caf50' }} />
+                      <span>Sauvegarde de la Base</span>
+                    </div>
                   </div>
                 )}
               </div>
@@ -1944,6 +2416,28 @@ export default function App() {
           </div>
 
           <div className="win-content-area">
+            {/* Rappel de sauvegarde : le planificateur est en mode « rappel » et l'échéance est passée. */}
+            {sauvegardeDue && activeTab !== 'sauvegarde' && (
+              <div style={{
+                marginBottom: '12px', padding: '10px 14px', borderRadius: '8px',
+                background: 'var(--c-warn-bg)', border: '1px solid var(--c-warn)',
+                display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', fontSize: '12.5px'
+              }}>
+                <AlertTriangle size={16} style={{ color: 'var(--c-warn)', flexShrink: 0 }} />
+                <span style={{ flex: 1, minWidth: '220px' }}>
+                  <strong>Sauvegarde {planSauvegarde.frequence} due.</strong>{' '}
+                  {planSauvegarde.derniereExecution
+                    ? `Dernière sauvegarde : ${new Date(planSauvegarde.derniereExecution).toLocaleDateString('fr-FR')}.`
+                    : 'Aucune sauvegarde effectuée depuis ce poste.'}
+                </span>
+                <button className="btn-action primary" onClick={() => switchTab('sauvegarde')}>
+                  <Database size={14} /> <span>Ouvrir la sauvegarde</span>
+                </button>
+                <button className="btn-action" onClick={() => setSauvegardeDue(false)} title="Masquer jusqu'à la prochaine ouverture">
+                  Plus tard
+                </button>
+              </div>
+            )}
             {/* ─── TAB: TABLEAU DE BORD (page d'accueil) ─────────────────────────
                 Tout est cadré par le périmètre de dépôts de l'utilisateur et par
                 le sélecteur de magasin de l'en-tête, pour que les chiffres du
@@ -3372,62 +3866,163 @@ SELECT 'Table inventaires créée avec succès!' AS result;`}</pre>
 
             {/* TAB: EMPLOYES & CHANTIERS */}
             {activeTab === 'employes' && (
-              <div className="split-view">
-                <div className="card" style={{ padding: '4px' }}>
-                  <div className="win-panel-header">👷 Liste Nominative des Employés</div>
-                  <div className="win-grid-container" style={{ border: 'none' }}>
-                    <table className="win-table">
-                      <thead>
-                        <tr>
-                          <th>Nom & Prénom</th>
-                          <th>Fonction</th>
-                          <th>Département</th>
-                          <th>Téléphone</th>
-                          <th>Chantier Affecté</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {getFilteredEmployes().map(emp => (
-                          <tr key={emp.id}>
-                            <td><strong>{emp.nom}</strong></td>
-                            <td>{emp.fonction}</td>
-                            <td>{emp.service}</td>
-                            <td>{emp.telephone}</td>
-                            <td><span className="badge badge-info">{emp.chantierNom || 'Non assigné'}</span></td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+              <div>
+                <div className="page-section-header">
+                  <div className="page-section-title">
+                    <h2 className="section-title"><Users size={20} style={{marginRight:8, verticalAlign:'middle'}}/>Employés & Chantiers</h2>
+                    <span className="section-lead">
+                      Fichier du personnel et liste des chantiers. Chaque grille a sa propre sélection :
+                      cliquez une ligne puis utilisez les boutons de son panneau. Un employé ou un chantier
+                      référencé par un bon de sortie ne peut pas être supprimé — il est sorti des effectifs ou marqué « Livré ».
+                    </span>
                   </div>
                 </div>
 
-                <div className="card" style={{ padding: '4px' }}>
-                  <div className="win-panel-header">🏗️ Suivi des Chantiers du Groupe</div>
-                  <div className="win-grid-container" style={{ border: 'none' }}>
-                    <table className="win-table">
-                      <thead>
-                        <tr>
-                          <th>Désignation Chantier</th>
-                          <th>Wilaya</th>
-                          <th>Conducteur de travaux</th>
-                          <th>Statut</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {getFilteredChantiers().map(chan => (
-                          <tr key={chan.id}>
-                            <td><strong>{chan.nom}</strong></td>
-                            <td>{chan.wilaya}</td>
-                            <td>{chan.chefNom}</td>
-                            <td>
-                              <span className={`badge ${chan.actif ? 'badge-success' : 'badge-danger'}`}>
-                                {chan.actif ? 'Actif' : 'Livré'}
-                              </span>
-                            </td>
+                {(!employesReady || !chantiersReady) && (
+                  <div style={{
+                    margin: '12px 0',
+                    padding: '14px 18px',
+                    background: 'linear-gradient(135deg, rgba(255,152,0,0.08), rgba(255,87,34,0.06))',
+                    border: '1px solid rgba(255,152,0,0.3)',
+                    borderRadius: '8px',
+                    fontSize: '12px'
+                  }}>
+                    <strong>⚠️ Tables « employes » / « chantiers » absentes de la base.</strong>
+                    <div style={{ marginTop: '6px', color: 'var(--text-muted)' }}>
+                      Exécutez le script <code>db/create_employes_chantiers.sql</code> dans l'éditeur SQL de Supabase,
+                      puis actualisez la page. Les listes affichées ci-dessous sont les valeurs par défaut,
+                      en lecture seule : l'ajout, la modification et la suppression sont désactivés.
+                    </div>
+                  </div>
+                )}
+
+                <div className="split-view">
+                  <div className="card" style={{ padding: '4px' }}>
+                    <div className="win-panel-header">
+                      <span>👷 Liste Nominative des Employés</span>
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        <button className="btn-action primary" onClick={() => openEmployeModal()} disabled={!peutGererPersonnel || !employesReady}>
+                          <Plus size={14} /> <span>Ajouter</span>
+                        </button>
+                        <button className="btn-action" onClick={handleEditEmploye} disabled={!peutGererPersonnel || !employesReady || !employeRowId}>
+                          <Edit size={14} /> <span>Modifier</span>
+                        </button>
+                        <button className="btn-action" onClick={handleToggleEmployeActif} disabled={!peutGererPersonnel || !employesReady || !employeRowId}
+                          title="Sortir des effectifs / réintégrer l'employé sélectionné">
+                          <RefreshCw size={14} /> <span>Statut</span>
+                        </button>
+                        <button className="btn-action danger" onClick={handleDeleteEmploye} disabled={!peutGererPersonnel || !employesReady || !employeRowId}>
+                          <Trash size={14} /> <span>Supprimer</span>
+                        </button>
+                      </div>
+                    </div>
+                    <div className="win-grid-container" style={{ border: 'none' }}>
+                      <table className="win-table">
+                        <thead>
+                          <tr>
+                            <th>Nom & Prénom</th>
+                            <th>Fonction</th>
+                            <th>Département</th>
+                            <th>Téléphone</th>
+                            <th>Chantier Affecté</th>
+                            <th>Statut</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody>
+                          {getFilteredEmployes().map(emp => (
+                            <tr
+                              key={emp.id}
+                              className={employeRowId === emp.id ? 'selected' : ''}
+                              onClick={() => setEmployeRowId(emp.id)}
+                              onDoubleClick={() => openEmployeModal(emp)}
+                              style={{ cursor: 'pointer', opacity: emp.actif === false ? 0.6 : 1 }}
+                            >
+                              <td><strong>{emp.nom}</strong></td>
+                              <td>{emp.fonction}</td>
+                              <td>{emp.service}</td>
+                              <td>{emp.telephone}</td>
+                              <td><span className="badge badge-info">{emp.chantierNom || 'Non assigné'}</span></td>
+                              <td>
+                                <span className={`badge ${emp.actif === false ? 'badge-danger' : 'badge-success'}`}>
+                                  {emp.actif === false ? 'Sorti' : 'En poste'}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                          {getFilteredEmployes().length === 0 && (
+                            <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '18px' }}>
+                              Aucun employé enregistré.
+                            </td></tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="win-grid-summary-footer">
+                      <span style={{ fontSize: '12px', color: 'var(--text-muted)', marginLeft: 'auto' }}>
+                        {getFilteredEmployes().filter(e => e.actif !== false).length} en poste / {getFilteredEmployes().length} employé(s)
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="card" style={{ padding: '4px' }}>
+                    <div className="win-panel-header">
+                      <span>🏗️ Suivi des Chantiers du Groupe</span>
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        <button className="btn-action primary" onClick={() => openChantierModal()} disabled={!peutGererPersonnel || !chantiersReady}>
+                          <Plus size={14} /> <span>Ajouter</span>
+                        </button>
+                        <button className="btn-action" onClick={handleEditChantier} disabled={!peutGererPersonnel || !chantiersReady || !chantierRowId}>
+                          <Edit size={14} /> <span>Modifier</span>
+                        </button>
+                        <button className="btn-action danger" onClick={handleDeleteChantier} disabled={!peutGererPersonnel || !chantiersReady || !chantierRowId}>
+                          <Trash size={14} /> <span>Supprimer</span>
+                        </button>
+                      </div>
+                    </div>
+                    <div className="win-grid-container" style={{ border: 'none' }}>
+                      <table className="win-table">
+                        <thead>
+                          <tr>
+                            <th>Désignation Chantier</th>
+                            <th>Wilaya</th>
+                            <th>Conducteur de travaux</th>
+                            <th>Effectif</th>
+                            <th>Statut</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {getFilteredChantiers().map(chan => (
+                            <tr
+                              key={chan.id}
+                              className={chantierRowId === chan.id ? 'selected' : ''}
+                              onClick={() => setChantierRowId(chan.id)}
+                              onDoubleClick={() => openChantierModal(chan)}
+                              style={{ cursor: 'pointer', opacity: chan.actif ? 1 : 0.6 }}
+                            >
+                              <td><strong>{chan.nom}</strong></td>
+                              <td>{chan.wilaya}</td>
+                              <td>{chan.chefNom}</td>
+                              <td>{employes.filter(e => e.chantierId === chan.id && e.actif !== false).length}</td>
+                              <td>
+                                <span className={`badge ${chan.actif ? 'badge-success' : 'badge-danger'}`}>
+                                  {chan.actif ? 'Actif' : 'Livré'}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                          {getFilteredChantiers().length === 0 && (
+                            <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '18px' }}>
+                              Aucun chantier enregistré.
+                            </td></tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="win-grid-summary-footer">
+                      <span style={{ fontSize: '12px', color: 'var(--text-muted)', marginLeft: 'auto' }}>
+                        {getFilteredChantiers().filter(c => c.actif).length} actif(s) / {getFilteredChantiers().length} chantier(s)
+                      </span>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -4299,6 +4894,291 @@ SELECT 'Table inventaires créée avec succès!' AS result;`}</pre>
               </div>
             )}
 
+            {/* TAB: SAUVEGARDE DE LA BASE */}
+            {activeTab === 'sauvegarde' && currentUser.role === 'direction' && (
+              <div>
+                <div className="page-section-header">
+                  <div className="page-section-title">
+                    <h2 className="section-title"><Database size={20} style={{marginRight:8, verticalAlign:'middle'}}/>Sauvegarde de la Base</h2>
+                    <span className="section-lead">
+                      Copie intégrale des données Supabase (articles, stocks, mouvements, achats, réceptions,
+                      factures, règlements, employés, chantiers…) dans un seul fichier JSON téléchargé sur ce poste.
+                      L'opération ne fait que lire la base : aucune donnée n'est modifiée.
+                    </span>
+                  </div>
+                  <div className="page-section-actions">
+                    <button
+                      className="btn-action primary"
+                      onClick={() => handleTelechargerSauvegarde('sql')}
+                      disabled={sauvegardeEnCours}
+                      title="Script SQL rejouable dans l'éditeur SQL Supabase pour restaurer les données"
+                    >
+                      <Download size={15} /> <span>{sauvegardeEnCours ? 'Sauvegarde en cours…' : 'Sauvegarde restaurable (.sql)'}</span>
+                    </button>
+                    <button
+                      className="btn-action"
+                      onClick={() => handleTelechargerSauvegarde('json')}
+                      disabled={sauvegardeEnCours}
+                      title="Copie brute des tables, pour archivage ou traitement externe"
+                    >
+                      <Download size={15} /> <span>Export brut (.json)</span>
+                    </button>
+                  </div>
+                </div>
+
+                {sauvegardeEnCours && (
+                  <div style={{
+                    margin: '12px 0', padding: '12px 16px', borderRadius: '8px',
+                    background: 'var(--bg-subtle)', border: '1px solid var(--border)',
+                    fontSize: '12px', display: 'flex', alignItems: 'center', gap: '10px'
+                  }}>
+                    <RefreshCw size={15} className="spin" />
+                    <span>{sauvegardeEtape || 'Lecture des tables…'}</span>
+                  </div>
+                )}
+
+                <div className="split-view">
+                  <div className="card">
+                    <div className="card-title card-title--blue">Contenu et options</div>
+                    <div style={{ fontSize: '12px', lineHeight: 1.7, marginTop: '10px' }}>
+                      <div style={{
+                        padding: '10px 14px', marginBottom: '12px', borderRadius: '6px',
+                        background: 'var(--c-good-bg)', border: '1px solid var(--c-good)'
+                      }}>
+                        <strong>Sauvegarde complète de la base (recommandée)</strong>
+                        <div style={{ marginTop: '6px' }}>
+                          Depuis le dossier du projet, en ligne de commande :
+                          <div style={{ margin: '6px 0', fontFamily: 'Consolas, monospace', fontSize: '11.5px' }}>
+                            npm run backup-db
+                          </div>
+                          Produit un vrai <code>pg_dump</code> PostgreSQL : schéma, contraintes, index,
+                          séquences, policies RLS <em>et</em> données — tout ce qu'il faut pour reconstruire
+                          la base à l'identique. Restauration : <code>npm run restore-db</code>.
+                          Procédure détaillée dans <code>BACKUP.md</code>.
+                        </div>
+                      </div>
+
+                      <p style={{ marginBottom: '10px' }}>
+                        Les deux boutons ci-dessus sauvegardent <strong>les données uniquement</strong>, sans
+                        installer d'outil ni connaître le mot de passe de la base — et seulement ce que vos
+                        droits (RLS) laissent lire. Le <code>.sql</code> se rejoue tel quel dans l'éditeur SQL
+                        Supabase (schéma déjà en place, lignes existantes non écrasées) ; le <code>.json</code>
+                        est une copie brute pour archivage ou traitement externe.
+                        Les tables absentes du déploiement sont listées, sans faire échouer l'export.
+                      </p>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '14px' }}>
+                        {SupabaseDatabase.TABLES_SAUVEGARDE.map(t => (
+                          <span key={t} className="badge badge-info" style={{ fontFamily: 'Consolas, monospace' }}>{t}</span>
+                        ))}
+                      </div>
+
+                      <div style={{
+                        padding: '10px 14px', borderRadius: '6px',
+                        background: 'var(--c-warn-bg)', border: '1px solid var(--c-warn)'
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <input
+                            type="checkbox"
+                            id="sauvegarde-mdp"
+                            checked={sauvegardeMotsDePasse}
+                            onChange={e => setSauvegardeMotsDePasse(e.target.checked)}
+                            disabled={sauvegardeEnCours}
+                          />
+                          <label htmlFor="sauvegarde-mdp" className="form-label" style={{ margin: 0 }}>
+                            Inclure les mots de passe des utilisateurs
+                          </label>
+                        </div>
+                        <div style={{ color: 'var(--text-muted)', marginTop: '6px', fontSize: '11px' }}>
+                          Les mots de passe sont stockés en clair dans la base. Décoché (recommandé), ils sont
+                          remplacés par <code>***MASQUE***</code> : la liste des comptes reste sauvegardée, mais
+                          les mots de passe devront être redéfinis après une restauration.
+                        </div>
+                      </div>
+
+                      <p style={{ marginTop: '14px', color: 'var(--text-muted)', fontSize: '11px' }}>
+                        ℹ️ Conservez les sauvegardes hors du poste de travail (disque externe, cloud d'entreprise).
+                        Aucune restauration n'est déclenchable depuis l'application : elle passe par l'éditeur SQL
+                        Supabase ou par <code>npm run restore-db</code>, pour éviter tout écrasement accidentel
+                        des données en production.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="card">
+                    <div className="card-title card-title--blue">Dernière sauvegarde de cette session</div>
+                    {!derniereSauvegarde ? (
+                      <div style={{ marginTop: '10px', fontSize: '12px', color: 'var(--text-muted)' }}>
+                        Aucune sauvegarde téléchargée depuis l'ouverture de l'application.
+                        Cliquez sur « Télécharger la sauvegarde » pour générer le fichier.
+                      </div>
+                    ) : (
+                      <div style={{ marginTop: '10px', fontSize: '12px' }}>
+                        <div style={{ marginBottom: '10px', lineHeight: 1.8 }}>
+                          <div><strong>Fichier :</strong> <code>{derniereSauvegarde.fichier}</code></div>
+                          <div><strong>Généré le :</strong> {derniereSauvegarde.date}</div>
+                          <div><strong>Volume :</strong> {derniereSauvegarde.lignes.toLocaleString('fr-FR')} ligne(s) — {derniereSauvegarde.poids}</div>
+                        </div>
+                        <div className="win-grid-container" style={{ maxHeight: '260px' }}>
+                          <table className="win-table">
+                            <thead>
+                              <tr><th>Table</th><th style={{ textAlign: 'right' }}>Lignes sauvegardées</th></tr>
+                            </thead>
+                            <tbody>
+                              {Object.entries(derniereSauvegarde.statistiques).map(([table, nb]) => (
+                                <tr key={table}>
+                                  <td><code>{table}</code></td>
+                                  <td style={{ textAlign: 'right' }}>{nb.toLocaleString('fr-FR')}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        {derniereSauvegarde.tablesAbsentes.length > 0 && (
+                          <div style={{ marginTop: '10px', fontSize: '11px', color: 'var(--text-muted)' }}>
+                            Tables absentes de ce déploiement (non exportées) : {derniereSauvegarde.tablesAbsentes.join(', ')}
+                          </div>
+                        )}
+                        {derniereSauvegarde.erreurs.length > 0 && (
+                          <div style={{ marginTop: '10px', fontSize: '11px', color: 'var(--c-danger)' }}>
+                            ⚠️ Tables illisibles (droits RLS ?) : {derniereSauvegarde.erreurs.map(e => e.table).join(', ')}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* ── PLANIFICATEUR ─────────────────────────────────────────── */}
+                <div className="card" style={{ marginTop: '12px' }}>
+                  <div className="card-title card-title--blue">⏱️ Planificateur de sauvegarde automatique</div>
+                  <div style={{ fontSize: '12px', lineHeight: 1.7, marginTop: '10px' }}>
+                    <p style={{ marginBottom: '12px', color: 'var(--text-muted)' }}>
+                      Le planificateur s'exécute <strong>à l'ouverture de l'application sur ce poste</strong> :
+                      un navigateur fermé ne peut rien sauvegarder. Le réglage est propre à ce poste et à ce
+                      navigateur. Pour une sauvegarde qui tourne même application fermée, voyez la tâche
+                      Windows plus bas.
+                    </p>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+                      <input
+                        type="checkbox"
+                        id="plan-actif"
+                        checked={planSauvegarde.actif}
+                        onChange={e => {
+                          const maj = { ...planSauvegarde, actif: e.target.checked };
+                          setPlanSauvegarde(maj);
+                          ecrirePlanSauvegarde(maj);
+                          if (!e.target.checked) setSauvegardeDue(false);
+                        }}
+                      />
+                      <label htmlFor="plan-actif" className="form-label" style={{ margin: 0, fontWeight: 700 }}>
+                        Activer la sauvegarde automatique
+                      </label>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '12px' }}>
+                      <div className="form-group">
+                        <label className="form-label">Fréquence</label>
+                        <select
+                          className="form-select"
+                          disabled={!planSauvegarde.actif}
+                          value={planSauvegarde.frequence}
+                          onChange={e => {
+                            const maj = { ...planSauvegarde, frequence: e.target.value as FrequenceSauvegarde };
+                            setPlanSauvegarde(maj);
+                            ecrirePlanSauvegarde(maj);
+                          }}
+                        >
+                          <option value="quotidienne">Quotidienne (1 jour)</option>
+                          <option value="hebdomadaire">Hebdomadaire (7 jours)</option>
+                          <option value="mensuelle">Mensuelle (30 jours)</option>
+                        </select>
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">Format du fichier</label>
+                        <select
+                          className="form-select"
+                          disabled={!planSauvegarde.actif}
+                          value={planSauvegarde.format}
+                          onChange={e => {
+                            const maj = { ...planSauvegarde, format: e.target.value as 'sql' | 'json' };
+                            setPlanSauvegarde(maj);
+                            ecrirePlanSauvegarde(maj);
+                          }}
+                        >
+                          <option value="sql">.sql — restaurable</option>
+                          <option value="json">.json — export brut</option>
+                        </select>
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">À l'échéance</label>
+                        <select
+                          className="form-select"
+                          disabled={!planSauvegarde.actif}
+                          value={planSauvegarde.mode}
+                          onChange={e => {
+                            const maj = { ...planSauvegarde, mode: e.target.value as 'auto' | 'rappel' };
+                            setPlanSauvegarde(maj);
+                            ecrirePlanSauvegarde(maj);
+                          }}
+                        >
+                          <option value="rappel">Me rappeler (bandeau)</option>
+                          <option value="auto">Télécharger sans rien demander</option>
+                        </select>
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">État</label>
+                        <div style={{ paddingTop: '4px' }}>
+                          {/* Pas de comparaison à l'heure courante pendant le rendu : l'échéance
+                              dépassée est celle constatée à l'ouverture (sauvegardeDue). */}
+                          {!planSauvegarde.actif ? (
+                            <span className="badge badge-danger">Désactivé</span>
+                          ) : !prochaineEcheance(planSauvegarde) ? (
+                            <span className="badge badge-warning">Première sauvegarde attendue</span>
+                          ) : sauvegardeDue ? (
+                            <span className="badge badge-warning">Échue</span>
+                          ) : (
+                            <span className="badge badge-success">
+                              Prochaine le {prochaineEcheance(planSauvegarde)?.toLocaleDateString('fr-FR')}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div style={{ marginTop: '4px', color: 'var(--text-muted)', fontSize: '11.5px' }}>
+                      Dernière sauvegarde depuis ce poste :{' '}
+                      {planSauvegarde.derniereExecution
+                        ? new Date(planSauvegarde.derniereExecution).toLocaleString('fr-FR')
+                        : 'aucune'}
+                      {planSauvegarde.mode === 'auto' && planSauvegarde.actif && (
+                        <> — en mode automatique, les mots de passe restent toujours masqués.</>
+                      )}
+                    </div>
+
+                    <div style={{
+                      marginTop: '14px', padding: '10px 14px', borderRadius: '6px',
+                      background: 'var(--c-good-bg)', border: '1px solid var(--c-good)'
+                    }}>
+                      <strong>Sauvegarde automatique complète, application fermée</strong>
+                      <div style={{ marginTop: '6px' }}>
+                        Une tâche Windows lance le vrai <code>pg_dump</code> (schéma + policies + données)
+                        à heure fixe, sans que personne n'ouvre l'application :
+                        <div style={{ margin: '6px 0', fontFamily: 'Consolas, monospace', fontSize: '11.5px' }}>
+                          npm run schedule-backup -- --time=20:00
+                        </div>
+                        <span style={{ color: 'var(--text-muted)' }}>
+                          Fichiers dans <code>backups/</code>, journal dans <code>backups/journal-sauvegarde.log</code>.
+                          Vérifier : <code>npm run schedule-backup -- --list</code> · Supprimer :{' '}
+                          <code>npm run schedule-backup -- --remove</code>. Le poste doit être allumé à l'heure prévue.
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
           </div>
         </main>
 
@@ -4738,6 +5618,177 @@ SELECT 'Table inventaires créée avec succès!' AS result;`}</pre>
               <div className="modal-footer">
                 <button type="button" className="btn btn-secondary" onClick={() => setMagasinModalOpen(false)}>Annuler</button>
                 <button type="submit" className="btn btn-primary">Valider</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 1 bis. Employé Add/Edit Modal */}
+      {employeModalOpen && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <form onSubmit={handleSaveEmploye}>
+              <div className="modal-header">
+                <span>{selectedEmploye?.id ? '✏️ Modifier l\'Employé' : '👷 Ajouter un Employé'}</span>
+                <button type="button" className="win-tab-close" onClick={() => { setEmployeModalOpen(false); setSelectedEmploye(null); }}>×</button>
+              </div>
+              <div className="modal-body">
+                <div className="form-group">
+                  <label className="form-label">Nom & Prénom *</label>
+                  <input
+                    type="text"
+                    required
+                    minLength={3}
+                    className="form-input"
+                    placeholder="Ex: Mustapha Loucif"
+                    value={selectedEmploye?.nom || ''}
+                    onChange={(e) => setSelectedEmploye({ ...selectedEmploye, nom: e.target.value })}
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Fonction *</label>
+                  <input
+                    type="text"
+                    required
+                    className="form-input"
+                    placeholder="Ex: Maçon Qualifié"
+                    value={selectedEmploye?.fonction || ''}
+                    onChange={(e) => setSelectedEmploye({ ...selectedEmploye, fonction: e.target.value })}
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Service / Département *</label>
+                  <select
+                    className="form-select"
+                    required
+                    value={selectedEmploye?.service || ''}
+                    onChange={(e) => setSelectedEmploye({ ...selectedEmploye, service: e.target.value })}
+                  >
+                    <option value="">-- Sélectionner un service --</option>
+                    <option value="Production Gros Œuvre">Production Gros Œuvre</option>
+                    <option value="Second Œuvre">Second Œuvre</option>
+                    <option value="Finition">Finition</option>
+                    <option value="Logistique">Logistique</option>
+                    <option value="Administration">Administration</option>
+                    <option value="Direction Technique">Direction Technique</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Téléphone *</label>
+                  <input
+                    type="tel"
+                    required
+                    className="form-input"
+                    placeholder="0555 12 34 56"
+                    value={selectedEmploye?.telephone || ''}
+                    onChange={(e) => setSelectedEmploye({ ...selectedEmploye, telephone: e.target.value })}
+                  />
+                  <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                    Mobile (05/06/07 + 8 chiffres) ou fixe (02/03/04 + 7 chiffres).
+                  </span>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">🏗️ Chantier d'affectation</label>
+                  <select
+                    className="form-select"
+                    value={selectedEmploye?.chantierId || ''}
+                    onChange={(e) => setSelectedEmploye({ ...selectedEmploye, chantierId: e.target.value })}
+                  >
+                    <option value="">-- Non assigné --</option>
+                    {/* Un chantier livré n'est plus proposé, sauf s'il est déjà celui de l'employé. */}
+                    {chantiers.filter(c => c.actif || c.id === selectedEmploye?.chantierId).map(c => (
+                      <option key={c.id} value={c.id}>{c.nom}{c.actif ? '' : ' (livré)'}</option>
+                    ))}
+                  </select>
+                </div>
+                {selectedEmploye?.id && (
+                  <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <input
+                      type="checkbox"
+                      id="employe-actif"
+                      checked={selectedEmploye?.actif !== false}
+                      onChange={(e) => setSelectedEmploye({ ...selectedEmploye, actif: e.target.checked })}
+                    />
+                    <label htmlFor="employe-actif" className="form-label" style={{ margin: 0 }}>
+                      Employé en poste (décocher = sorti des effectifs)
+                    </label>
+                  </div>
+                )}
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-secondary" onClick={() => { setEmployeModalOpen(false); setSelectedEmploye(null); }}>Annuler</button>
+                <button type="submit" className="btn btn-primary" disabled={isSubmitting}>{isSubmitting ? 'Enregistrement…' : 'Valider'}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 1 ter. Chantier Add/Edit Modal */}
+      {chantierModalOpen && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <form onSubmit={handleSaveChantier}>
+              <div className="modal-header">
+                <span>{selectedChantier?.id ? '✏️ Modifier le Chantier' : '🏗️ Ajouter un Chantier'}</span>
+                <button type="button" className="win-tab-close" onClick={() => { setChantierModalOpen(false); setSelectedChantier(null); }}>×</button>
+              </div>
+              <div className="modal-body">
+                <div className="form-group">
+                  <label className="form-label">Désignation du Chantier *</label>
+                  <input
+                    type="text"
+                    required
+                    minLength={3}
+                    className="form-input"
+                    placeholder="Ex: Chantier 100 Logements LPP - Alger"
+                    value={selectedChantier?.nom || ''}
+                    onChange={(e) => setSelectedChantier({ ...selectedChantier, nom: e.target.value })}
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Wilaya *</label>
+                  <input
+                    type="text"
+                    required
+                    className="form-input"
+                    placeholder="Ex: Alger (16)"
+                    value={selectedChantier?.wilaya || ''}
+                    onChange={(e) => setSelectedChantier({ ...selectedChantier, wilaya: e.target.value })}
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Conducteur de travaux *</label>
+                  <input
+                    type="text"
+                    required
+                    className="form-input"
+                    placeholder="Ex: Omar Chef"
+                    value={selectedChantier?.chefNom || ''}
+                    onChange={(e) => setSelectedChantier({ ...selectedChantier, chefNom: e.target.value })}
+                  />
+                </div>
+                <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <input
+                    type="checkbox"
+                    id="chantier-actif"
+                    checked={selectedChantier?.actif !== false}
+                    onChange={(e) => setSelectedChantier({ ...selectedChantier, actif: e.target.checked })}
+                  />
+                  <label htmlFor="chantier-actif" className="form-label" style={{ margin: 0 }}>
+                    Chantier actif (décocher = livré / clôturé)
+                  </label>
+                </div>
+                {selectedChantier?.id && employes.filter(e => e.chantierId === selectedChantier.id && e.actif !== false).length > 0 && (
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                    ℹ️ {employes.filter(e => e.chantierId === selectedChantier.id && e.actif !== false).length} employé(s) actuellement affecté(s) à ce chantier.
+                  </div>
+                )}
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-secondary" onClick={() => { setChantierModalOpen(false); setSelectedChantier(null); }}>Annuler</button>
+                <button type="submit" className="btn btn-primary" disabled={isSubmitting}>{isSubmitting ? 'Enregistrement…' : 'Valider'}</button>
               </div>
             </form>
           </div>
@@ -5512,8 +6563,9 @@ SELECT 'Table inventaires créée avec succès!' AS result;`}</pre>
                         required
                       >
                         <option value="">-- Sélectionner un chantier --</option>
-                        {chantiers.filter(c => c.actif).map(c => (
-                          <option key={c.id} value={c.id}>{c.nom} — {c.wilaya}</option>
+                        {/* Un chantier livré n'est plus proposé, sauf s'il est déjà celui du bon modifié. */}
+                        {chantiers.filter(c => c.actif || c.id === affectationChaId).map(c => (
+                          <option key={c.id} value={c.id}>{c.nom} — {c.wilaya}{c.actif ? '' : ' (livré)'}</option>
                         ))}
                       </select>
                     </div>
@@ -5526,7 +6578,9 @@ SELECT 'Table inventaires créée avec succès!' AS result;`}</pre>
                     <label className="form-label">👤 Responsable signataire *</label>
                     <select className="form-select" value={affectationEmpId} onChange={(e) => setAffectationEmpId(e.target.value)} required>
                       <option value="">-- Magasinier / Chef Chantier --</option>
-                      {employes.map(e => (
+                      {/* Les employés sortis des effectifs ne sont plus proposés à la saisie,
+                          sauf s'ils signent déjà le bon en cours de modification. */}
+                      {employes.filter(e => e.actif !== false || e.id === affectationEmpId).map(e => (
                         <option key={e.id} value={e.id}>{e.nom} ({e.fonction})</option>
                       ))}
                     </select>

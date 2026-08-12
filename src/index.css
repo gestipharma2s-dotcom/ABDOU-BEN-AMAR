@@ -1740,6 +1740,9 @@ code, kbd {
   to { transform: rotate(360deg); }
 }
 
+/* Utilitaire : rotation continue, pour les icônes de traitement en cours (sauvegarde…) */
+.spin { animation: spin 0.9s linear infinite; }
+
 /* Accounts Demo Grid */
 .login-help {
   margin-top: 28px;

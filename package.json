@@ -7,6 +7,10 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "start-server": "node server/server.js",
+    "check-db": "node scripts/check-db-connection.mjs",
+    "backup-db": "node scripts/backup-db.mjs",
+    "restore-db": "node scripts/restore-db.mjs",
+    "schedule-backup": "node scripts/schedule-backup.mjs",
     "lint": "eslint .",
     "preview": "vite preview"
   },

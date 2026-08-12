@@ -3166,16 +3166,504 @@ export class SupabaseDatabase {
   }
 
   // ============================================
+  // EMPLOYÉS & CHANTIERS
+  // ============================================
+  // Les tables `employes` / `chantiers` peuvent être absentes d'un déploiement : comme
+  // pour `inventaires` et `societe`, l'absence est détectée et exposée à l'UI, qui bascule
+  // alors en lecture seule sur les listes codées en dur (DEFAULT_EMPLOYES / DEFAULT_CHANTIERS).
+  // Script de création : db/create_employes_chantiers.sql
+  //
+  // Identifiants en TEXT ('emp-…' / 'cha-…') et non UUID : les affectations déjà émises
+  // référencent les valeurs codées en dur, qu'on doit pouvoir continuer à résoudre.
+  static isEmployesAvailable = true;
+  static isChantiersAvailable = true;
+  static employesCache: Employe[] = DEFAULT_EMPLOYES;
+  static chantiersCache: Chantier[] = DEFAULT_CHANTIERS;
+
+  // PGRST205 = table introuvable dans le cache de schéma PostgREST
+  private static isMissingTableError(error: any): boolean {
+    return error?.code === 'PGRST205' || /schema cache|does not exist/i.test(error?.message || '');
+  }
+
+  private static mapEmployeFromDb(row: any): Employe {
+    return {
+      id: String(row.id),
+      nom: String(row.nom || ''),
+      fonction: row.fonction || '',
+      service: row.service || '',
+      telephone: row.telephone || '',
+      chantierId: row.chantierId || row.chantier_id || undefined,
+      chantierNom: row.chantierNom || row.chantier_nom || undefined,
+      actif: row.actif ?? true
+    };
+  }
+
+  private static mapChantierFromDb(row: any): Chantier {
+    return {
+      id: String(row.id),
+      nom: String(row.nom || ''),
+      wilaya: row.wilaya || '',
+      chefNom: row.chefNom || row.chef_nom || '',
+      actif: row.actif ?? true
+    };
+  }
+
+  // Comparaison de libellés pour le contrôle d'unicité : sans casse, sans accent,
+  // espaces normalisés (« Mustapha  LOUCIF » et « mustapha loucif » sont un doublon).
+  private static normalizeLibelle(valeur: string): string {
+    return (valeur || '')
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+      .toLowerCase()
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  static async getEmployes(): Promise<Employe[]> {
+    try {
+      const { data, error } = await supabase.from('employes').select('*').order('nom');
+
+      if (error) {
+        if (this.isMissingTableError(error)) {
+          this.isEmployesAvailable = false;
+          this.employesCache = DEFAULT_EMPLOYES;
+          return DEFAULT_EMPLOYES;
+        }
+        throw error;
+      }
+
+      this.isEmployesAvailable = true;
+      const list = (data || []).map(row => this.mapEmployeFromDb(row));
+      this.employesCache = list;
+      return list;
+    } catch (err) {
+      console.error('Error fetching employes:', err);
+      this.employesCache = DEFAULT_EMPLOYES;
+      return DEFAULT_EMPLOYES;
+    }
+  }
+
+  static async getChantiers(): Promise<Chantier[]> {
+    try {
+      const { data, error } = await supabase.from('chantiers').select('*').order('nom');
+
+      if (error) {
+        if (this.isMissingTableError(error)) {
+          this.isChantiersAvailable = false;
+          this.chantiersCache = DEFAULT_CHANTIERS;
+          return DEFAULT_CHANTIERS;
+        }
+        throw error;
+      }
+
+      this.isChantiersAvailable = true;
+      const list = (data || []).map(row => this.mapChantierFromDb(row));
+      this.chantiersCache = list;
+      return list;
+    } catch (err) {
+      console.error('Error fetching chantiers:', err);
+      this.chantiersCache = DEFAULT_CHANTIERS;
+      return DEFAULT_CHANTIERS;
+    }
+  }
+
+  // Création ou mise à jour d'un employé. Les contrôles bloquants (champs obligatoires,
+  // unicité du nom, chantier livré) lèvent une Error dont le message est affiché tel quel.
+  static async saveEmploye(employe: Partial<Employe>): Promise<Employe> {
+    if (!this.isEmployesAvailable) {
+      throw new Error('Table « employes » absente de la base. Exécutez db/create_employes_chantiers.sql dans l\'éditeur SQL Supabase.');
+    }
+
+    const cleanId = employe.id ? sanitizeId(employe.id) : null;
+    const nom = (employe.nom || '').trim();
+    if (nom.length < 3) throw new Error('Le nom de l\'employé est obligatoire (3 caractères minimum).');
+    if (!(employe.fonction || '').trim()) throw new Error('La fonction de l\'employé est obligatoire.');
+    if (!(employe.service || '').trim()) throw new Error('Le service / département est obligatoire.');
+
+    // Unicité du nom (hors lui-même en modification) : contrôle applicatif doublé
+    // d'un index unique sur lower(nom) en base.
+    const doublon = this.employesCache.find(
+      e => e.id !== cleanId && this.normalizeLibelle(e.nom) === this.normalizeLibelle(nom)
+    );
+    if (doublon) throw new Error(`Un employé nommé « ${doublon.nom} » existe déjà.`);
+
+    // Un employé ne peut pas être affecté à un chantier livré (inactif). Le contrôle ne
+    // porte que sur une NOUVELLE affectation : sinon un employé rattaché à un chantier
+    // livré deviendrait impossible à modifier (ne serait-ce que pour le désactiver).
+    const ancien = cleanId ? this.employesCache.find(e => e.id === cleanId) : null;
+    let chantierNom = '';
+    if (employe.chantierId) {
+      const chantier = this.chantiersCache.find(c => c.id === employe.chantierId);
+      if (!chantier) throw new Error('Le chantier sélectionné est introuvable.');
+      if (!chantier.actif && ancien?.chantierId !== employe.chantierId) {
+        throw new Error(`Le chantier « ${chantier.nom} » est livré (inactif) : impossible d'y affecter un employé.`);
+      }
+      chantierNom = chantier.nom;
+    }
+
+    const row: Record<string, any> = {
+      nom,
+      fonction: (employe.fonction || '').trim(),
+      service: (employe.service || '').trim(),
+      telephone: (employe.telephone || '').trim(),
+      chantierId: employe.chantierId || null,
+      chantierNom: employe.chantierId ? chantierNom : null,
+      actif: employe.actif ?? true,
+      updated_at: new Date().toISOString()
+    };
+
+    try {
+      if (cleanId) {
+        const { data, error } = await supabase.from('employes').update(row).eq('id', cleanId).select().single();
+        if (error) throw error;
+        await this.logAction('employes', 'update', cleanId, null, row);
+        const updated = this.mapEmployeFromDb(data);
+        const idx = this.employesCache.findIndex(e => e.id === cleanId);
+        if (idx !== -1) this.employesCache[idx] = updated;
+        return updated;
+      }
+
+      const nouveau = { ...row, id: `emp-${Date.now().toString(36)}`, created_at: new Date().toISOString() };
+      const { data, error } = await supabase.from('employes').insert([nouveau]).select().single();
+      if (error) throw error;
+      await this.logAction('employes', 'create', nouveau.id, null, nouveau);
+      const cree = this.mapEmployeFromDb(data);
+      this.employesCache = [...this.employesCache, cree];
+      return cree;
+    } catch (err: any) {
+      // 23505 = violation de l'index unique sur lower(nom)
+      if (err?.code === '23505') throw new Error(`Un employé nommé « ${nom} » existe déjà en base.`, { cause: err });
+      console.error('Error saving employe:', err);
+      throw new Error(err?.message || 'Erreur lors de l\'enregistrement de l\'employé.', { cause: err });
+    }
+  }
+
+  // Suppression d'un employé, refusée s'il est référencé par un bon de sortie.
+  static async deleteEmploye(id: string | any): Promise<{ success: boolean; raison?: string }> {
+    const cleanId = sanitizeId(id);
+    if (!cleanId) return { success: false, raison: 'Identifiant employé invalide.' };
+    if (!this.isEmployesAvailable) {
+      return { success: false, raison: 'Table « employes » absente de la base. Exécutez db/create_employes_chantiers.sql.' };
+    }
+
+    try {
+      // Contrôle côté serveur : les affectations sont la seule pièce qui référence un employé.
+      const { data: liees, error: errAff } = await supabase
+        .from('affectations')
+        .select('code')
+        .eq('employeId', cleanId)
+        .limit(5);
+
+      if (!errAff && liees && liees.length > 0) {
+        const codes = liees.map((a: any) => a.code).filter(Boolean).join(', ');
+        return {
+          success: false,
+          raison: `Cet employé est référencé par ${liees.length >= 5 ? 'au moins 5' : liees.length} bon(s) de sortie${codes ? ` (${codes})` : ''}.\n\n` +
+                  'Désactivez-le (sortie des effectifs) plutôt que de le supprimer : l\'historique des bons reste ainsi lisible.'
+        };
+      }
+
+      const { error } = await supabase.from('employes').delete().eq('id', cleanId);
+      if (error) throw error;
+
+      await this.logAction('employes', 'delete', cleanId, null, null);
+      this.employesCache = this.employesCache.filter(e => e.id !== cleanId);
+      return { success: true };
+    } catch (err: any) {
+      console.error('Error deleting employe:', err);
+      return { success: false, raison: err?.message || 'Erreur lors de la suppression de l\'employé.' };
+    }
+  }
+
+  static async saveChantier(chantier: Partial<Chantier>): Promise<Chantier> {
+    if (!this.isChantiersAvailable) {
+      throw new Error('Table « chantiers » absente de la base. Exécutez db/create_employes_chantiers.sql dans l\'éditeur SQL Supabase.');
+    }
+
+    const cleanId = chantier.id ? sanitizeId(chantier.id) : null;
+    const nom = (chantier.nom || '').trim();
+    if (nom.length < 3) throw new Error('La désignation du chantier est obligatoire (3 caractères minimum).');
+    if (!(chantier.wilaya || '').trim()) throw new Error('La wilaya du chantier est obligatoire.');
+    if (!(chantier.chefNom || '').trim()) throw new Error('Le conducteur de travaux est obligatoire.');
+
+    const doublon = this.chantiersCache.find(
+      c => c.id !== cleanId && this.normalizeLibelle(c.nom) === this.normalizeLibelle(nom)
+    );
+    if (doublon) throw new Error(`Un chantier nommé « ${doublon.nom} » existe déjà.`);
+
+    const row: Record<string, any> = {
+      nom,
+      wilaya: (chantier.wilaya || '').trim(),
+      chefNom: (chantier.chefNom || '').trim(),
+      actif: chantier.actif ?? true,
+      updated_at: new Date().toISOString()
+    };
+
+    try {
+      if (cleanId) {
+        const ancien = this.chantiersCache.find(c => c.id === cleanId);
+        const { data, error } = await supabase.from('chantiers').update(row).eq('id', cleanId).select().single();
+        if (error) throw error;
+        await this.logAction('chantiers', 'update', cleanId, ancien, row);
+
+        const updated = this.mapChantierFromDb(data);
+        const idx = this.chantiersCache.findIndex(c => c.id === cleanId);
+        if (idx !== -1) this.chantiersCache[idx] = updated;
+
+        // `chantierNom` est dénormalisé sur les employés : un renommage doit être répercuté,
+        // sinon la colonne « Chantier Affecté » affiche l'ancien libellé.
+        if (ancien && ancien.nom !== updated.nom) {
+          await supabase.from('employes').update({ chantierNom: updated.nom }).eq('chantierId', cleanId);
+          this.employesCache = this.employesCache.map(e =>
+            e.chantierId === cleanId ? { ...e, chantierNom: updated.nom } : e
+          );
+        }
+        return updated;
+      }
+
+      const nouveau = { ...row, id: `cha-${Date.now().toString(36)}`, created_at: new Date().toISOString() };
+      const { data, error } = await supabase.from('chantiers').insert([nouveau]).select().single();
+      if (error) throw error;
+      await this.logAction('chantiers', 'create', nouveau.id, null, nouveau);
+      const cree = this.mapChantierFromDb(data);
+      this.chantiersCache = [...this.chantiersCache, cree];
+      return cree;
+    } catch (err: any) {
+      if (err?.code === '23505') throw new Error(`Un chantier nommé « ${nom} » existe déjà en base.`, { cause: err });
+      console.error('Error saving chantier:', err);
+      throw new Error(err?.message || 'Erreur lors de l\'enregistrement du chantier.', { cause: err });
+    }
+  }
+
+  // Suppression d'un chantier, refusée s'il porte des employés ou des bons de sortie.
+  static async deleteChantier(id: string | any): Promise<{ success: boolean; raison?: string }> {
+    const cleanId = sanitizeId(id);
+    if (!cleanId) return { success: false, raison: 'Identifiant chantier invalide.' };
+    if (!this.isChantiersAvailable) {
+      return { success: false, raison: 'Table « chantiers » absente de la base. Exécutez db/create_employes_chantiers.sql.' };
+    }
+
+    try {
+      const motifs: string[] = [];
+
+      const { data: empLies, error: errEmp } = await supabase
+        .from('employes')
+        .select('nom')
+        .eq('chantierId', cleanId)
+        .limit(10);
+      if (!errEmp && empLies && empLies.length > 0) {
+        motifs.push(`• ${empLies.length} employé(s) affecté(s) : ${empLies.map((e: any) => e.nom).join(', ')}`);
+      }
+
+      const { data: affLiees, error: errAff } = await supabase
+        .from('affectations')
+        .select('code')
+        .eq('chantierId', cleanId)
+        .limit(5);
+      if (!errAff && affLiees && affLiees.length > 0) {
+        motifs.push(`• Bon(s) de sortie matériel : ${affLiees.map((a: any) => a.code).filter(Boolean).join(', ')}`);
+      }
+
+      if (motifs.length > 0) {
+        return {
+          success: false,
+          raison: 'Ce chantier est encore référencé par :\n\n' + motifs.join('\n') +
+                  '\n\nRéaffectez les employés et conservez les bons émis : marquez plutôt le chantier comme « Livré » (décochez « Chantier actif »).'
+        };
+      }
+
+      const { error } = await supabase.from('chantiers').delete().eq('id', cleanId);
+      if (error) throw error;
+
+      await this.logAction('chantiers', 'delete', cleanId, null, null);
+      this.chantiersCache = this.chantiersCache.filter(c => c.id !== cleanId);
+      return { success: true };
+    } catch (err: any) {
+      console.error('Error deleting chantier:', err);
+      return { success: false, raison: err?.message || 'Erreur lors de la suppression du chantier.' };
+    }
+  }
+
+  // ============================================
+  // SAUVEGARDE DE LA BASE (export brut)
+  // ============================================
+  // L'export copie les lignes TELLES QU'ELLES SONT en base : aucun mappage
+  // camelCase / snake_case, aucun repli sur les valeurs par défaut. Le fichier doit
+  // pouvoir être relu et réinjecté sans transformation, y compris pour les tables
+  // dont la casse des colonnes diverge (users, inventaires en snake_case).
+  static readonly TABLES_SAUVEGARDE: string[] = [
+    'societe',
+    'magasins',
+    'articles',
+    'fournisseurs',
+    'chantiers',
+    'employes',
+    'users',
+    'stocks',
+    'mouvements_stock',
+    'commandes',
+    'commande_lignes',
+    'receptions',
+    'reception_lignes',
+    'affectations',
+    'transferts',
+    'transfert_lignes',
+    'inventaires',
+    'factures',
+    'paiements',
+    'audit_logs'
+  ];
+
+  // PostgREST plafonne une réponse à 1000 lignes : sans pagination, une sauvegarde
+  // de `mouvements_stock` serait silencieusement tronquée.
+  private static async lireTableComplete(table: string): Promise<any[]> {
+    const TAILLE_LOT = 1000;
+    const lignes: any[] = [];
+    for (let debut = 0; ; debut += TAILLE_LOT) {
+      const { data, error } = await supabase.from(table).select('*').range(debut, debut + TAILLE_LOT - 1);
+      if (error) throw error;
+      const lot = data || [];
+      lignes.push(...lot);
+      if (lot.length < TAILLE_LOT) break;
+    }
+    return lignes;
+  }
+
+  static async exporterSauvegarde(options?: {
+    inclureMotsDePasse?: boolean;
+    onProgress?: (table: string, index: number, total: number) => void;
+  }): Promise<{
+    meta: Record<string, any>;
+    tables: Record<string, any[]>;
+    statistiques: Record<string, number>;
+    tablesAbsentes: string[];
+    erreurs: { table: string; message: string }[];
+  }> {
+    const tables: Record<string, any[]> = {};
+    const statistiques: Record<string, number> = {};
+    const tablesAbsentes: string[] = [];
+    const erreurs: { table: string; message: string }[] = [];
+    const total = this.TABLES_SAUVEGARDE.length;
+
+    for (let i = 0; i < total; i++) {
+      const table = this.TABLES_SAUVEGARDE[i];
+      options?.onProgress?.(table, i, total);
+      try {
+        let lignes = await this.lireTableComplete(table);
+
+        // Les mots de passe sont stockés en clair dans users.password_hash : par défaut
+        // ils sont masqués pour qu'une sauvegarde égarée ne livre pas tous les comptes.
+        if (table === 'users' && !options?.inclureMotsDePasse) {
+          lignes = lignes.map(u => ({ ...u, password_hash: u.password_hash ? '***MASQUE***' : u.password_hash }));
+        }
+
+        tables[table] = lignes;
+        statistiques[table] = lignes.length;
+      } catch (err: any) {
+        if (this.isMissingTableError(err)) {
+          tablesAbsentes.push(table);
+        } else {
+          erreurs.push({ table, message: err?.message || String(err) });
+        }
+      }
+    }
+    options?.onProgress?.('', total, total);
+
+    const utilisateur = this.getCurrentUser();
+    return {
+      meta: {
+        application: 'BG Maçonnerie / BGM Central',
+        formatVersion: 1,
+        genereLe: new Date().toISOString(),
+        genereParNom: utilisateur?.name || '',
+        genereParRole: utilisateur?.role || '',
+        projetSupabase: supabaseUrl,
+        motsDePasseInclus: !!options?.inclureMotsDePasse,
+        tablesExportees: Object.keys(tables),
+        nombreLignesTotal: Object.values(statistiques).reduce((somme, n) => somme + n, 0)
+      },
+      tables,
+      statistiques,
+      tablesAbsentes,
+      erreurs
+    };
+  }
+
+  // Variante restaurable de la sauvegarde : un script SQL rejouable dans l'éditeur
+  // SQL Supabase, sans aucun outil installé ni mot de passe de base.
+  //
+  // Chaque table est réinjectée via `jsonb_populate_recordset(NULL::public.<table>, …)` :
+  // c'est le type de ligne de la table qui pilote les conversions, donc les colonnes
+  // JSONB (`commandes.lignes`), les tableaux (`users.magasins_ids`) et les dates sont
+  // restaurés correctement, là où des INSERT à valeurs formatées à la main casseraient.
+  //
+  // Attention : ce script ne contient QUE les données, pas le schéma, et seulement ce
+  // que la RLS laisse lire à l'utilisateur connecté. La sauvegarde complète
+  // (schéma + contraintes + policies + données) reste `npm run backup-db` (pg_dump).
+  static async exporterSauvegardeSQL(options?: {
+    inclureMotsDePasse?: boolean;
+    onProgress?: (table: string, index: number, total: number) => void;
+  }): Promise<{ sql: string; statistiques: Record<string, number>; tablesAbsentes: string[]; erreurs: { table: string; message: string }[]; meta: Record<string, any> }> {
+    const sauvegarde = await this.exporterSauvegarde(options);
+
+    const echapper = (texte: string) => texte.replace(/'/g, "''");
+    const tablesRemplies = Object.entries(sauvegarde.tables).filter(([, lignes]) => lignes.length > 0);
+
+    const morceaux: string[] = [];
+    morceaux.push('-- ============================================================');
+    morceaux.push('-- Sauvegarde des DONNEES — BG Maconnerie / BGM Central');
+    morceaux.push(`-- Genere le ${new Date().toLocaleString('fr-FR')} par ${sauvegarde.meta.genereParNom || 'inconnu'}`);
+    morceaux.push(`-- Projet : ${supabaseUrl}`);
+    morceaux.push(`-- ${sauvegarde.meta.nombreLignesTotal} ligne(s) sur ${tablesRemplies.length} table(s)`);
+    morceaux.push('--');
+    morceaux.push('-- RESTAURATION : coller ce script dans l\'editeur SQL Supabase et l\'executer.');
+    morceaux.push('-- Le schema doit deja exister (db/supabase_init.sql, db/create_*.sql).');
+    morceaux.push('-- Les lignes deja presentes ne sont PAS ecrasees (ON CONFLICT DO NOTHING).');
+    morceaux.push('-- Pour un remplacement complet, decommenter le bloc TRUNCATE ci-dessous.');
+    if (!sauvegarde.meta.motsDePasseInclus) {
+      morceaux.push('--');
+      morceaux.push('-- ATTENTION : les mots de passe sont masques (***MASQUE***) dans cette sauvegarde.');
+      morceaux.push('-- Ils devront etre redefinis apres restauration de la table users.');
+    }
+    morceaux.push('-- ============================================================');
+    morceaux.push('');
+    morceaux.push('BEGIN;');
+    morceaux.push('');
+    morceaux.push('-- Remplacement complet : vider les tables avant reinjection.');
+    morceaux.push('-- TRUNCATE ' + tablesRemplies.map(([t]) => `public.${t}`).join(', ') + ' CASCADE;');
+    morceaux.push('');
+
+    for (const [table, lignes] of Object.entries(sauvegarde.tables)) {
+      if (lignes.length === 0) {
+        morceaux.push(`-- ${table} : aucune ligne`);
+        morceaux.push('');
+        continue;
+      }
+      morceaux.push(`-- ${table} : ${lignes.length} ligne(s)`);
+      morceaux.push(`INSERT INTO public.${table}`);
+      morceaux.push(`SELECT * FROM jsonb_populate_recordset(NULL::public.${table}, '${echapper(JSON.stringify(lignes))}'::jsonb)`);
+      morceaux.push('ON CONFLICT DO NOTHING;');
+      morceaux.push('');
+    }
+
+    morceaux.push('COMMIT;');
+    morceaux.push('');
+    for (const [table, nb] of Object.entries(sauvegarde.statistiques)) {
+      morceaux.push(`-- attendu apres restauration : ${table} >= ${nb} ligne(s)`);
+    }
+
+    return {
+      sql: morceaux.join('\n'),
+      statistiques: sauvegarde.statistiques,
+      tablesAbsentes: sauvegarde.tablesAbsentes,
+      erreurs: sauvegarde.erreurs,
+      meta: sauvegarde.meta
+    };
+  }
+
+  // ============================================
   // PLACEHOLDER METHODS
   // ============================================
-
-  static getEmployes(): Promise<Employe[]> {
-    return Promise.resolve(DEFAULT_EMPLOYES);
-  }
-
-  static getChantiers(): Promise<Chantier[]> {
-    return Promise.resolve(DEFAULT_CHANTIERS);
-  }
 
   static getDashboardKPIs(authorizedStoreIds?: string[]): any {
     let magasins = this.magasinsCache.filter(m => m.actif);

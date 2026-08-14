@@ -177,6 +177,11 @@ export default function App() {
 
   // Les actions Modifier / Supprimer sont portées par l'en-tête de page (handleRibbonEdit /
   // handleRibbonDelete sur la ligne sélectionnée) : plus de boutons par ligne sur Articles et Magasins.
+  // Instant de référence des durées affichées (ancienneté d'un transfert en transit).
+  // Figé au changement d'onglet : le rendu ne doit pas lire l'horloge.
+  const [horodatagePage, setHorodatagePage] = useState<number>(0);
+  const [transfertEnReception, setTransfertEnReception] = useState<string | null>(null);
+
   const [rightPanelActive, setRightPanelActive] = useState<'filters' | null>(null);
   const [expandedNodes, setExpandedNodes] = useState<Record<string, boolean>>({
     stock: true,
@@ -380,6 +385,7 @@ export default function App() {
     setSelectedRowId(null);
     setEmployeRowId(null);
     setChantierRowId(null);
+    setHorodatagePage(Date.now());
     // La recherche porte sur la page courante : la conserver d'un onglet à l'autre donnait
     // des journaux vides sans raison apparente (« la recherche ne marche pas »).
     setSearchQuery('');
@@ -762,6 +768,38 @@ export default function App() {
     }
     setChantierRowId(null);
     await reloadData();
+  };
+
+  // Étape 3 du circuit transfert : entrée en stock au dépôt destination.
+  // La marchandise est déjà sortie du dépôt départ à la validation ; tant que la
+  // réception n'est pas faite, elle n'est comptée nulle part.
+  const handleReceptionnerTransfert = async (tr: Transfert) => {
+    if (!peutReceptionner(tr)) {
+      alert(
+        '⛔ Réception non autorisée\n\n' +
+        `Seuls la direction et le magasinier de ${tr.magasinDestNom} peuvent réceptionner ce transfert.`
+      );
+      return;
+    }
+    if (transfertEnReception) return;
+
+    const detail = (tr.lignes || []).map(l => `• ${l.quantite} × ${l.designation}`).join('\n');
+    const anciennete = joursEnTransit(tr);
+    if (!window.confirm(
+      `Confirmer la réception du transfert ${tr.code} au dépôt ${tr.magasinDestNom} ?\n\n` +
+      `Expédié par ${tr.magasinDepartNom}${anciennete > 0 ? ` il y a ${anciennete} jour(s)` : ''}.\n\n` +
+      `${detail}\n\n` +
+      'Ces quantités entreront en stock immédiatement.'
+    )) return;
+
+    setTransfertEnReception(tr.id);
+    try {
+      // recevoirTransfert affiche lui-même le motif du refus (statut déjà reçu, etc.)
+      const ok = await SupabaseDatabase.recevoirTransfert(tr.id);
+      if (ok) await reloadData();
+    } finally {
+      setTransfertEnReception(null);
+    }
   };
 
   const handleCreateCommande = async (e: React.FormEvent) => {
@@ -1856,6 +1894,45 @@ export default function App() {
     });
   };
 
+  // ── RÉCEPTIONS TRANSFERTS (étape 3 du circuit) ──────────────────────────────
+  // Le périmètre est ici celui du dépôt DESTINATION — c'est lui qui réceptionne —
+  // et non « départ ou destination » comme sur la page Transferts.
+  // 'Expédié' est l'ancien libellé de 'Validé' : il subsiste sur les lignes anciennes.
+  const estEnAttenteReception = (tr: Transfert) => tr.statut === 'Validé' || tr.statut === 'Expédié';
+
+  const peutReceptionner = (tr: Transfert) =>
+    currentUser.role === 'direction' ||
+    (currentUser.role === 'magasinier' && tr.magasinDestId === currentUser.magasinId);
+
+  const filtrerParDestination = (liste: Transfert[]) => {
+    const authIds = getAuthorizedMagasins().map(m => m.id);
+    return liste
+      .filter(tr => authIds.includes(tr.magasinDestId))
+      .filter(tr => !selectedMagasinFilter || tr.magasinDestId === selectedMagasinFilter)
+      .filter(tr => matchSearch(tr.code, tr.magasinDepartNom, tr.magasinDestNom, tr.demandeurNom, tr.valideurNom, tr.motif));
+  };
+
+  // Les plus anciens en tête : ce sont les marchandises qui dorment le plus longtemps
+  // en transit, donc les premières à régulariser.
+  const getTransfertsAReceptionner = () =>
+    filtrerParDestination(transferts.filter(estEnAttenteReception))
+      .sort((a, b) =>
+        new Date(a.dateExpedition || a.dateDemande).getTime() - new Date(b.dateExpedition || b.dateDemande).getTime()
+      );
+
+  const getTransfertsRecus = () =>
+    filtrerParDestination(transferts.filter(tr => tr.statut === 'Reçu'))
+      .sort((a, b) => new Date(b.dateReception || 0).getTime() - new Date(a.dateReception || 0).getTime());
+
+  // Nombre de jours écoulés depuis la sortie du dépôt départ : au-delà de quelques
+  // jours, la marchandise « en transit » n'est plus dans aucun stock exploitable.
+  // L'instant de référence est figé à l'ouverture de l'onglet (horodatagePage) plutôt
+  // que lu pendant le rendu, qui doit rester pur.
+  const joursEnTransit = (tr: Transfert) => {
+    if (!tr.dateExpedition || !horodatagePage) return 0;
+    return Math.max(0, Math.floor((horodatagePage - new Date(tr.dateExpedition).getTime()) / 86400000));
+  };
+
   const getFilteredAffectations = () => {
     const authIds = getAuthorizedMagasins().map(m => m.id);
     return affectations.filter(aff => {
@@ -1913,7 +1990,7 @@ export default function App() {
   const TREE_MENU: Record<string, { groupe: string; noeuds: string[] }> = {
     stock: { groupe: 'Stock', noeuds: ['Catalogue Articles', 'Magasins / Dépôts', 'Niveaux de Stocks', 'Inventaires Physiques'] },
     achats: { groupe: 'Comptoir / Achats', noeuds: ["Demandes d'Achat", 'DA', 'Réceptions BL', 'Fournisseurs'] },
-    chantiers: { groupe: 'Chantiers & Logistique', noeuds: ['Affectations Matériel', 'Employés & Chantiers', 'Transferts Inter-Mag'] },
+    chantiers: { groupe: 'Chantiers & Logistique', noeuds: ['Affectations Matériel', 'Employés & Chantiers', 'Transferts Inter-Mag', 'Réceptions Transferts', 'recevoir'] },
     compta: { groupe: 'Comptabilité & Analyses', noeuds: ["Factures d'Achats", 'Règlements Fournisseurs', 'Rapports & Graphiques'] },
     admin: { groupe: 'Administration', noeuds: ['Utilisateurs & Droits', 'Société — Infos & Coordonnées', 'entreprise', 'coordonnées', 'Sauvegarde de la Base', 'backup', 'export', 'archive'] }
   };
@@ -1972,6 +2049,7 @@ export default function App() {
       case 'affectations': return 'Affectations Matériel';
       case 'employes': return 'Employés & Chantiers';
       case 'transferts': return 'Transferts Inter-Mag';
+      case 'receptions_transferts': return 'Réceptions Transferts';
       case 'factures': return 'Factures d\'Achats';
       case 'finances': return 'Paiements / Règlements';
       case 'audit': return 'Journal d\'Audit';
@@ -2328,6 +2406,18 @@ export default function App() {
                       <RefreshCw size={12} style={{ color: '#673ab7' }} />
                       <span>Transferts Inter-Mag</span>
                     </div>
+                    {/* Étape 3 du circuit : réservée aux dépôts qui réceptionnent */}
+                    {(currentUser.role === 'direction' || currentUser.role === 'magasinier') && (
+                      <div className={`tree-node ${activeTab === 'receptions_transferts' ? 'active' : ''}`} onClick={() => switchTab('receptions_transferts')}>
+                        <Truck size={12} style={{ color: '#e91e63' }} />
+                        <span>Réceptions Transferts</span>
+                        {getTransfertsAReceptionner().length > 0 && (
+                          <span className="badge badge-warning" style={{ marginLeft: 'auto', fontSize: '9px', padding: '0 5px' }}>
+                            {getTransfertsAReceptionner().length}
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -4146,21 +4236,19 @@ SELECT 'Table inventaires créée avec succès!' AS result;`}</pre>
                                   ✗ Refuser
                                 </button>
                               )}
-                              {/* Étape 3 : réception par la direction ou le magasinier du dépôt destination — entre la marchandise */}
-                              {(tr.statut === 'Validé' || tr.statut === 'Expédié') && (currentUser.role === 'direction' || (currentUser.role === 'magasinier' && tr.magasinDestId === currentUser.magasinId)) && (
+                              {/* Étape 3 : la réception se fait sur son écran dédié, où le dépôt
+                                  destination retrouve tous ses transferts en attente. Ici, simple renvoi. */}
+                              {estEnAttenteReception(tr) && peutReceptionner(tr) && (
                                 <button
-                                  className="btn btn-success"
-                                  style={{ padding: '1px 6px', fontSize: '9px', color: '#fff', backgroundColor: 'var(--c-good)' }}
+                                  className="btn btn-secondary"
+                                  style={{ padding: '1px 6px', fontSize: '9px' }}
+                                  title="Ouvrir l'écran Réceptions Transferts"
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    if (!confirm(`Confirmer la réception du transfert ${tr.code} à ${tr.magasinDestNom} ?`)) return;
-                                    void (async () => {
-                                      await SupabaseDatabase.recevoirTransfert(tr.id);
-                                      await reloadData();
-                                    })();
+                                    switchTab('receptions_transferts');
                                   }}
                                 >
-                                  📥 Réception Transfert
+                                  📥 Réceptionner →
                                 </button>
                               )}
                               {tr.statut === 'Demande' && (
@@ -4184,6 +4272,182 @@ SELECT 'Table inventaires créée avec succès!' AS result;`}</pre>
                 </div>
                 <div className="win-grid-summary-footer">
                   <span style={{ fontSize: '12px', color: 'var(--text-muted)', marginLeft: 'auto' }}>{getFilteredTransferts().length} transfert(s)</span>
+                </div>
+              </div>
+            )}
+
+            {/* TAB: RÉCEPTIONS TRANSFERTS — étape 3 du circuit inter-magasins */}
+            {activeTab === 'receptions_transferts' && (currentUser.role === 'direction' || currentUser.role === 'magasinier') && (
+              <div>
+                <div className="page-section-header">
+                  <div className="page-section-title">
+                    <h2 className="section-title"><Truck size={20} style={{marginRight:8, verticalAlign:'middle'}}/>Réceptions Transferts</h2>
+                    <span className="section-lead">
+                      Étape 3 du circuit inter-magasins : accuser réception de la marchandise expédiée par un autre dépôt.
+                      Entre la validation et la réception, la marchandise est <strong>sortie du dépôt départ sans être encore entrée</strong>
+                      {' '}au dépôt destination — elle n'apparaît dans aucun stock. Réceptionner au plus tôt.
+                    </span>
+                  </div>
+                  <div className="page-section-actions">
+                    <button className="btn-action" onClick={() => switchTab('transferts')}>
+                      <RefreshCw size={15} /> <span>Voir tous les transferts</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* ── En attente de réception ─────────────────────────────── */}
+                <div className="card" style={{ padding: '4px' }}>
+                  <div className="win-panel-header">
+                    <span>📥 En attente de réception ({getTransfertsAReceptionner().length})</span>
+                  </div>
+                  <div className="win-grid-container" style={{ border: 'none' }}>
+                    <table className="win-table">
+                      <thead>
+                        <tr>
+                          <th>Code transfert</th>
+                          <th>Dépôt expéditeur</th>
+                          <th>Dépôt destination</th>
+                          <th>Validé le</th>
+                          <th>En transit</th>
+                          <th>Contenu</th>
+                          <th>Motif</th>
+                          <th>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {getTransfertsAReceptionner().map(tr => {
+                          const jours = joursEnTransit(tr);
+                          const lignes = tr.lignes || [];
+                          const autorise = peutReceptionner(tr);
+                          return (
+                            <tr
+                              key={tr.id}
+                              className={selectedRowId === tr.id ? 'selected' : ''}
+                              onClick={() => setSelectedRowId(tr.id)}
+                              style={{ cursor: 'pointer' }}
+                            >
+                              <td><code>{tr.code}</code></td>
+                              <td>{tr.magasinDepartNom}</td>
+                              <td><strong>{tr.magasinDestNom}</strong></td>
+                              <td>{tr.dateExpedition ? new Date(tr.dateExpedition).toLocaleDateString('fr-FR') : '—'}</td>
+                              <td>
+                                {/* Au-delà d'une semaine, la marchandise dort en transit : on l'accentue. */}
+                                <span className={`badge ${jours >= 7 ? 'badge-danger' : jours >= 3 ? 'badge-warning' : 'badge-info'}`}>
+                                  {jours === 0 ? "aujourd'hui" : `${jours} j`}
+                                </span>
+                              </td>
+                              <td style={{ fontSize: '11px' }}>
+                                {lignes.length === 0 ? (
+                                  <span style={{ color: 'var(--text-muted)' }}>aucune ligne</span>
+                                ) : (
+                                  lignes.map((l, i) => (
+                                    <div key={i}>{l.quantite} × {l.designation}</div>
+                                  ))
+                                )}
+                              </td>
+                              <td style={{ fontSize: '11px' }}>{tr.motif || '—'}</td>
+                              <td>
+                                <div style={{ display: 'flex', gap: '4px' }}>
+                                  <button
+                                    className="btn btn-secondary"
+                                    style={{ padding: '1px 6px', fontSize: '9px' }}
+                                    title="Voir le bon de transfert et l'imprimer"
+                                    onClick={(e) => { e.stopPropagation(); setPrintDoc({ type: 'transfert', data: tr }); }}
+                                  >
+                                    Voir
+                                  </button>
+                                  <button
+                                    className="btn btn-success"
+                                    style={{ padding: '1px 6px', fontSize: '9px', color: '#fff', backgroundColor: 'var(--c-good)' }}
+                                    disabled={!autorise || transfertEnReception === tr.id}
+                                    title={autorise
+                                      ? 'Entrer la marchandise en stock au dépôt destination'
+                                      : `Réservé à la direction et au magasinier de ${tr.magasinDestNom}`}
+                                    onClick={(e) => { e.stopPropagation(); void handleReceptionnerTransfert(tr); }}
+                                  >
+                                    {transfertEnReception === tr.id ? 'Réception…' : '📥 Réceptionner'}
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                        {getTransfertsAReceptionner().length === 0 && (
+                          <tr>
+                            <td colSpan={8} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '24px' }}>
+                              ✅ Aucun transfert en attente de réception sur vos dépôts.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* ── Historique ──────────────────────────────────────────── */}
+                <div className="card" style={{ padding: '4px', marginTop: '12px' }}>
+                  <div className="win-panel-header">
+                    <span>✅ Transferts déjà réceptionnés ({getTransfertsRecus().length})</span>
+                  </div>
+                  <div className="win-grid-container" style={{ border: 'none', maxHeight: '320px' }}>
+                    <table className="win-table">
+                      <thead>
+                        <tr>
+                          <th>Code transfert</th>
+                          <th>Dépôt expéditeur</th>
+                          <th>Dépôt destination</th>
+                          <th>Reçu le</th>
+                          <th>Réceptionné par</th>
+                          <th>Contenu</th>
+                          <th>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {getTransfertsRecus().slice(0, 30).map(tr => (
+                          <tr
+                            key={tr.id}
+                            className={selectedRowId === tr.id ? 'selected' : ''}
+                            onClick={() => setSelectedRowId(tr.id)}
+                            style={{ cursor: 'pointer' }}
+                          >
+                            <td><code>{tr.code}</code></td>
+                            <td>{tr.magasinDepartNom}</td>
+                            <td>{tr.magasinDestNom}</td>
+                            <td>{tr.dateReception ? new Date(tr.dateReception).toLocaleDateString('fr-FR') : '—'}</td>
+                            <td>{tr.receveurNom || '—'}</td>
+                            <td style={{ fontSize: '11px' }}>
+                              {(tr.lignes || []).map((l, i) => (
+                                <div key={i}>{l.quantite} × {l.designation}</div>
+                              ))}
+                            </td>
+                            <td>
+                              <button
+                                className="btn btn-secondary"
+                                style={{ padding: '1px 6px', fontSize: '9px' }}
+                                onClick={(e) => { e.stopPropagation(); setPrintDoc({ type: 'transfert', data: tr }); }}
+                              >
+                                Voir
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                        {getTransfertsRecus().length === 0 && (
+                          <tr>
+                            <td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '18px' }}>
+                              Aucun transfert réceptionné pour l'instant.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                  {getTransfertsRecus().length > 30 && (
+                    <div className="win-grid-summary-footer">
+                      <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: 'auto' }}>
+                        30 derniers affichés sur {getTransfertsRecus().length}
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
